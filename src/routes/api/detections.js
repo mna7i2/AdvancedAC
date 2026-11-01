@@ -131,6 +131,30 @@ router.post('/detections/config/preset', can('detections.configure'), h(async (r
   res.json({ ok: true, level });
 }));
 
+// ─── Exempt zones: areas where chosen detections never fire (training grounds, events…) ───
+const ZoneSchema = z.object({
+  name: z.string().trim().min(1).max(48),
+  x: z.number().finite().min(-20000).max(20000), y: z.number().finite().min(-20000).max(20000), z: z.number().finite().min(-2000).max(5000),
+  radius: z.number().finite().min(1).max(3000),
+  detections: z.array(z.string().max(64)).max(80).default(['all']),
+  jobs: z.array(z.string().trim().min(1).max(48)).max(20).default([]),
+  enabled: z.boolean().default(true),
+});
+router.get('/zones', can('detections.view'), h(async (req, res) => res.json((await getSettings(req.user.orgId)).zones.list)));
+router.put('/zones', can('detections.configure'), h(async (req, res) => {
+  const list = parse(z.array(ZoneSchema).max(50), req.body);
+  for (const zn of list) {
+    zn.detections = [...new Set(zn.detections.filter((k) => k === 'all' || BY_KEY[k]))];
+    if (!zn.detections.length) zn.detections = ['all'];
+    zn.jobs = [...new Set(zn.jobs.map((j) => j.toLowerCase()))];
+  }
+  const before = (await getSettings(req.user.orgId)).zones.list;
+  await setSetting(req.user.orgId, 'zones', { list });
+  await publishConfig(req.user.orgId);
+  await audit({ ...actor(req), action: 'zones.update', targetType: 'settings', targetId: 'zones', details: { before: before.length, after: list.length, names: list.map((x) => x.name) } });
+  res.json(list);
+}));
+
 router.get('/detections/exploit-library', can('detections.view'), (req, res) => res.json(EXPLOIT_LIBRARY));
 
 router.get('/detections/config/export', can('detections.view'), h(async (req, res) => {

@@ -35,6 +35,8 @@ const DEFAULTS = {
     minX: -5639.9, maxX: 6804.7, minY: -4223.9, maxY: 8392.1,
   },
   general: { appealUrl: '', serverDisplayName: '', protectionLevel: 'balanced' },
+  // Exempt zones (e.g. a military training area): detections listed are skipped inside the sphere.
+  zones: { list: [] },
 };
 
 async function getSettings(orgId) {

@@ -52,6 +52,7 @@ async function buildAgentConfig(server) {
     detections,
     telemetry: settings.telemetry,
     monitoring: settings.monitoring,
+    zones: (settings.zones.list || []).filter((zn) => zn.enabled !== false),
     enforcement: { kickMessage: settings.enforcement.kickMessage, banMessage: settings.enforcement.banMessage, appealUrl: settings.general.appealUrl },
     staff: staffRows.map((s) => ({
       name: s.display_name,

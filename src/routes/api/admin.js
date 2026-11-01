@@ -147,6 +147,7 @@ router.get('/settings', can('dashboard.view'), h(async (req, res) => res.json(aw
 
 router.put('/settings/:key', can('settings.manage'), h(async (req, res) => {
   const key = parse(z.enum(Object.keys(DEFAULTS)), req.params.key);
+  if (key === 'zones') return res.status(400).json({ error: 'Use PUT /zones' });
   const clean = sanitizeSettings(key, req.body);
   if (!clean) return res.status(400).json({ error: 'invalid settings' });
   const cur = (await getSettings(req.user.orgId))[key];

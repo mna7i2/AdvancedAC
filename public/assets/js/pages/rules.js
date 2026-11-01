@@ -21,10 +21,11 @@ export default async function rules(el, ctx) {
   const { store } = ctx;
   const canEdit = store.can('detections.configure');
   const dis = canEdit ? '' : 'disabled';
-  let cfg, settings, library, servers;
+  let cfg, settings, library, servers, zones, online = [];
 
   async function load() {
-    [cfg, settings, library, servers] = await Promise.all([api.get('/detections/config'), api.get('/settings'), api.get('/detections/exploit-library'), api.get('/servers')]);
+    [cfg, settings, library, servers, zones] = await Promise.all([api.get('/detections/config'), api.get('/settings'), api.get('/detections/exploit-library'), api.get('/servers'), api.get('/zones')]);
+    online = store.serverId && store.can('players.view') ? await api.get(`/servers/${store.serverId}/players`).catch(() => []) : [];
     render();
   }
   const det = (key) => cfg.detections.find((d) => d.key === key);
@@ -57,6 +58,34 @@ export default async function rules(el, ctx) {
           <div class="muted small" style="margin-top:8px;line-height:1.5">${l.desc}</div></button>`)}</div>
         <div class="card-b" style="padding-top:0"><div class="notice">${icon('shieldCheck')}<span>At every level, client-side signals can never ban on their own and evidence is captured before enforcement.</span></div></div></div>
 
+
+      <div class="card"><div class="card-h"><div><h3>Exempt zones</h3><div class="muted small">Areas where the chosen detections never fire — e.g. a military training ground where a script hands out heavy weapons. Optionally only for some jobs.</div></div><span class="badge">${zones.length}</span></div>
+        <div class="card-b">
+          ${zones.length ? html`<table class="t" style="margin-bottom:14px"><thead><tr><th>Zone</th><th>Position</th><th>Radius</th><th>Skipped detections</th><th>Jobs</th><th>Active</th><th></th></tr></thead><tbody>
+            ${zones.map((zn, i) => html`<tr><td><b>${zn.name}</b></td><td class="mono muted small">${Math.round(zn.x)}, ${Math.round(zn.y)}, ${Math.round(zn.z)}</td><td>${zn.radius} m</td>
+              <td class="small">${zn.detections.includes('all') ? html`<span class="badge orange">All detections</span>` : zn.detections.map((k) => (det(k) ? det(k).name : k)).join(', ')}</td>
+              <td class="small">${zn.jobs.length ? zn.jobs.join(', ') : html`<span class="muted">Everyone</span>`}</td>
+              <td><label class="switch"><input type="checkbox" data-zon="${i}" ${zn.enabled !== false ? 'checked' : ''} ${dis}/><span></span></label></td>
+              <td>${canEdit ? html`<button class="btn xs" data-zrm="${i}">${icon('x')}</button>` : ''}</td></tr>`)}</tbody></table>` : html`<div class="muted small" style="margin-bottom:14px">No exempt zones.</div>`}
+          ${canEdit ? html`<form id="zone-add" class="col" style="gap:10px">
+            <div class="row wrap" style="gap:8px">
+              <input class="input" name="name" placeholder="Zone name, e.g. Military training" maxlength="48" style="max-width:240px" required/>
+              <input class="input" name="x" placeholder="X" style="max-width:110px" inputmode="decimal" required/>
+              <input class="input" name="y" placeholder="Y" style="max-width:110px" inputmode="decimal" required/>
+              <input class="input" name="z" placeholder="Z" style="max-width:110px" inputmode="decimal" required/>
+              <input class="input" name="radius" placeholder="Radius (m)" style="max-width:120px" inputmode="decimal" value="100" required/>
+              ${online.length ? html`<select class="input" id="zone-pos" style="max-width:240px"><option value="">Use position of player…</option>${online.filter((o) => o.state).map((o) => html`<option value="${o.netId}">[${o.netId}] ${o.name}</option>`)}</select>` : ''}
+            </div>
+            <div class="row wrap" style="gap:8px">
+              <select class="input" name="mode" id="zone-mode" style="max-width:240px"><option value="all">Skip all detections</option><option value="pick">Skip only chosen detections</option></select>
+              <input class="input" name="jobs" placeholder="Jobs (optional, comma separated) e.g. army, police" maxlength="300" style="max-width:360px"/>
+              <button class="btn primary">${icon('plus')}Add zone</button>
+            </div>
+            <div id="zone-pick" style="display:none;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px 14px">
+              ${cfg.detections.map((d) => html`<label class="row small" style="gap:8px"><input type="checkbox" value="${d.key}" ${['weapon_blacklist', 'blocked_model', 'explosion_blocked_type', 'weapon_mismatch'].includes(d.key) ? 'checked' : ''}/>${d.name}</label>`)}
+            </div></form>` : ''}
+          <div class="notice" style="margin-top:14px">${icon('info')}<span>In-game, open this page through <code>/adv</code> and pick yourself in “Use position of player” to drop the zone where you stand.</span></div>
+        </div></div>
       <div class="card"><div class="card-h"><div><h3>Blocked events (exploits)</h3><div class="muted small">A cheat menu that triggers one of these events is caught and handled by the <b>${det('honeypot_event').config.action.toUpperCase()}</b> action. Paste the name of any exploited event.</div></div><span class="badge">${events.length}</span></div>
         <div class="card-b">
           ${canEdit ? html`<form class="row wrap" id="ev-add" style="gap:8px;margin-bottom:14px"><input class="input" name="name" placeholder="event name, e.g. esx_garbagejob:pay" style="max-width:340px" maxlength="128"/>
@@ -88,7 +117,26 @@ export default async function rules(el, ctx) {
     </div>`);
   }
 
+  async function saveZones(list, btn) {
+    zones = await busy(btn || document.createElement('button'), () => api.put('/zones', list));
+    toast({ type: 'success', text: 'Zones saved — active on every server within seconds' });
+    render();
+  }
+  el.addEventListener('change', (e) => {
+    if (e.target.id === 'zone-mode') { $id('zone-pick').style.display = e.target.value === 'pick' ? 'grid' : 'none'; return; }
+    if (e.target.id === 'zone-pos') {
+      const o = online.find((x) => String(x.netId) === e.target.value); if (!o || !o.state) return;
+      const f = $id('zone-add'); f.x.value = o.state.x.toFixed(1); f.y.value = o.state.y.toFixed(1); f.z.value = o.state.z.toFixed(1);
+      return;
+    }
+    const zon = e.target.closest('[data-zon]');
+    if (zon && canEdit) { const list = zones.map((x) => ({ ...x })); list[+zon.dataset.zon].enabled = zon.checked; saveZones(list); }
+  });
+  const $id = (id) => el.querySelector('#' + id);
+
   el.addEventListener('click', async (e) => {
+    const zrm = e.target.closest('[data-zrm]');
+    if (zrm) { if (!(await confirmDialog('Delete zone?', zones[+zrm.dataset.zrm].name, 'Delete', true))) return; return saveZones(zones.filter((_, i) => i !== +zrm.dataset.zrm), zrm); }
     const lv = e.target.closest('[data-level]');
     if (lv && canEdit) {
       const l = LEVELS.find((x) => x.key === lv.dataset.level);
@@ -116,6 +164,15 @@ export default async function rules(el, ctx) {
   el.addEventListener('submit', (e) => {
     e.preventDefault();
     const f = e.target;
+    if (f.id === 'zone-add') {
+      const n = (v) => Number(String(v).replace(',', '.'));
+      const zn = { name: f.name.value.trim(), x: n(f.x.value), y: n(f.y.value), z: n(f.z.value), radius: n(f.radius.value), enabled: true,
+        detections: f.mode.value === 'all' ? ['all'] : [...el.querySelectorAll('#zone-pick input:checked')].map((c) => c.value),
+        jobs: f.jobs.value.split(',').map((j) => j.trim()).filter(Boolean) };
+      if (![zn.x, zn.y, zn.z, zn.radius].every(Number.isFinite) || !zn.name) return toast({ type: 'error', text: 'Fill in name, X, Y, Z and radius' });
+      if (f.mode.value === 'pick' && !zn.detections.length) return toast({ type: 'error', text: 'Choose at least one detection' });
+      return saveZones([...zones, zn], f.querySelector('button.primary'));
+    }
     if (f.id === 'ev-add') {
       const name = f.name.value.trim();
       if (!/^[\w:.\-@/]{1,128}$/.test(name)) return toast({ type: 'error', text: 'Invalid event name' });
