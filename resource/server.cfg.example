@@ -1,0 +1,23 @@
+# ─── Sentinel AC (AdvancedAC) ───────────────────────────────────────────────
+# Required: OneSync (server-side detections depend on it)
+set onesync on
+
+# Backend connection. Use `set` (private) — NEVER `sets` (public, visible to players).
+set sentinel_backend "http://127.0.0.1:8080"
+set sentinel_api_key "sac_srv_PASTE_YOUR_KEY_HERE"
+
+# Allows dashboard console commands and resource start/stop/restart
+add_ace resource.AdvancedAC command allow
+
+# Staff: full in-game admin menu (/adv) and never flagged while using staff tools (noclip, godmode, txAdmin menu)
+add_ace group.admin sentinel.admin allow
+add_ace group.admin sentinel.bypass allow
+# Fine-grained example: moderators may only kick and view
+# add_ace group.moderator sentinel.perm.players.view allow
+# add_ace group.moderator sentinel.perm.players.kick allow
+
+# Recommended: block modified client files (FiveM built-in protection)
+sv_pureLevel 1
+
+ensure screenshot-basic
+ensure AdvancedAC
