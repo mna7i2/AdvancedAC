@@ -19,6 +19,7 @@ const players = require('../services/players');
 const bans = require('../services/bans');
 const commands = require('../services/commands');
 const enforcement = require('../services/enforcement');
+const { createSession } = require('../middleware/auth');
 
 const router = express.Router();
 router.use(express.json({ limit: '4mb' }));
@@ -400,6 +401,22 @@ router.post('/audit', wrap(async (req, res) => {
     await activity(req.server.org_id, req.server.id, 'admin', `${who.name}: ${e.action}${target ? ' → ' + target.name : ''}`);
   }
   res.json({ ok: true });
+}));
+
+// ─── In-game panel session: the same dashboard, opened with /adv ───
+// Issued only for a player whose identifiers are linked to an active dashboard account of this org.
+// The token is a normal (revocable, audited) dashboard session with a short lifetime.
+router.post('/staff/session', wrap(async (req, res) => {
+  const b = parse(z.object({ name: z.string().max(128), identifiers: ident }), req.body);
+  const strong = b.identifiers.filter((i) => /^(license2?|steam|discord|fivem|xbl|live):/.test(i));
+  const u = strong.length ? await db.one(
+    `SELECT a.id, a.display_name FROM admin_users a
+     WHERE a.org_id=$1 AND a.active AND a.linked_identifiers && $2::text[] LIMIT 1`, [req.server.org_id, strong]) : null;
+  if (!u) return res.json({ ok: false, reason: 'not_linked' });
+  const token = await createSession(u.id, req.ip, `in-game panel (${req.server.name})`, 6);
+  await audit({ orgId: req.server.org_id, actorType: 'ingame_admin', actorId: u.id, actorName: `${u.display_name} (in-game)`,
+    action: 'auth.ingame_session', details: { server: req.server.name, player: b.name } });
+  res.json({ ok: true, token, name: u.display_name, apiBase: config.publicUrl, serverId: req.server.id });
 }));
 
 // ─── Server-side alerts (resource stop/start etc.) ───

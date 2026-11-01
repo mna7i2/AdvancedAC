@@ -173,7 +173,7 @@ export const confirmDialog = (title, text, label = 'Confirm', danger = true) => 
 export function lightbox(src, caption = '') {
   modal({ title: caption || 'Evidence', wide: true, hideSubmit: true, cancelLabel: 'Close',
     body: html`<div class="lightbox"><img src="${src}" alt="evidence" /></div>
-      <div class="row"><a class="btn sm" href="${src}" target="_blank" rel="noopener">${icon('download')}Open original</a></div>` });
+      <div class="row nui-hide"><a class="btn sm" href="${src}" target="_blank" rel="noopener">${icon('download')}Open original</a></div>` });
 }
 
 /** Button helper: runs async fn with a loading state. */

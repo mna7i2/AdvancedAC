@@ -1,5 +1,5 @@
 // Sentinel AC dashboard — bootstrap, auth, router, realtime.
-import { api } from './api.js';
+import { api, NUI, API_BASE } from './api.js';
 import { html, icon, esc, toast, $ } from './ui.js';
 
 const PAGES = [
@@ -11,6 +11,7 @@ const PAGES = [
   { path: '/replay', title: 'Session Replay', icon: 'play', perm: 'replay.view', mod: 'replay' },
   { group: 'Protection' },
   { path: '/detections', title: 'Detections', icon: 'radar', perm: 'detections.view', mod: 'detections', badge: 'detections' },
+  { path: '/rules', title: 'Protection Rules', icon: 'shieldCheck', perm: 'detections.view', mod: 'rules' },
   { path: '/bans', title: 'Bans', icon: 'ban', perm: 'bans.view', mod: 'bans', badge: 'appeals' },
   { path: '/lookup', title: 'Player Lookup', icon: 'search', perm: 'lookup.view', mod: 'lookup' },
   { path: '/evidence', title: 'Evidence Center', icon: 'folder', perm: 'evidence.view', mod: 'evidence' },
@@ -88,7 +89,10 @@ function renderShell() {
   </div>`);
   renderServerPicker();
   $('#srv').addEventListener('change', (e) => { setServer(e.target.value); route(); });
-  $('#logout').addEventListener('click', async () => { await api.post('/auth/logout').catch(() => {}); location.hash = ''; location.reload(); });
+  $('#logout').addEventListener('click', async () => {
+    if (NUI) { window.parent.postMessage({ type: 'sac:close' }, '*'); return; }
+    await api.post('/auth/logout').catch(() => {}); location.hash = ''; location.reload();
+  });
 }
 
 function renderServerPicker() {
@@ -128,7 +132,9 @@ function subscribe() {
 }
 
 function connectSocket() {
-  const s = window.io({ withCredentials: true, transports: ['websocket', 'polling'] });
+  const s = NUI
+    ? window.io(API_BASE, { auth: { token: NUI.token }, transports: ['websocket', 'polling'] })
+    : window.io({ withCredentials: true, transports: ['websocket', 'polling'] });
   store.socket = s;
   const live = () => $('#live');
   s.on('connect', () => { if (live()) live().innerHTML = '<span class="dot on pulse"></span>Live'; subscribe(); });
@@ -211,7 +217,8 @@ async function boot() {
   store.servers = me.servers;
   let saved = null;
   try { saved = localStorage.getItem('sac:server'); } catch { /* storage unavailable */ }
-  store.serverId = (store.servers.find((s) => s.id === saved) || store.servers[0] || {}).id || null;
+  store.serverId = (store.servers.find((s) => s.id === (NUI ? NUI.serverId : saved)) || store.servers[0] || {}).id || null;
+  if (NUI) document.body.classList.add('nui');
   store.settings = await api.get('/settings');
   renderShell();
   if (store.socket) store.socket.close();
@@ -221,5 +228,11 @@ async function boot() {
   route();
 }
 
-window.addEventListener('sac:unauthenticated', () => { store.user = null; if (store.socket) store.socket.close(); renderLogin('Your session has expired. Please sign in again.'); });
+export { NUI };
+window.addEventListener('sac:unauthenticated', () => {
+  if (NUI) { window.parent.postMessage({ type: 'sac:expired' }, '*'); return; }
+  store.user = null; if (store.socket) store.socket.close(); renderLogin('Your session has expired. Please sign in again.');
+});
+// In-game: ESC closes the panel (unless a modal is open).
+if (NUI) document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !document.querySelector('.modal-back')) window.parent.postMessage({ type: 'sac:close' }, '*'); });
 boot();

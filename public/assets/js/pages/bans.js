@@ -15,7 +15,7 @@ export default async function bans(el, ctx) {
       <div class="search" style="width:300px">${icon('search')}<input class="input" id="q" placeholder="Player, ban ID or reason…" value="${f.q}"/></div>
       <div class="btn-group" id="status">${['active', 'expired', 'revoked', 'all'].map((s) => html`<button data-v="${s}" class="${f.status === s ? 'on' : ''}">${s[0].toUpperCase() + s.slice(1)}</button>`)}</div>
       <select class="input" id="auto" style="width:170px"><option value="">Manual + automatic</option><option value="true">Automatic only</option><option value="false">Manual only</option></select>
-      <div class="grow"></div><span class="muted small">Public appeal page: <a href="/appeal.html" target="_blank">/appeal.html</a></span></div>
+      <div class="grow"></div><span class="muted small nui-hide">Public appeal page: <a href="/appeal.html" target="_blank">/appeal.html</a></span></div>
       <div class="card"><div class="table-wrap" id="table"></div><div class="pager"><button class="btn sm" id="prev">Previous</button><button class="btn sm" id="next">Next</button></div></div>`);
     $('#auto', body).value = f.automatic;
     const load = async () => {

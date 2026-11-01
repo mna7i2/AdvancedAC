@@ -34,7 +34,7 @@ const DEFAULTS = {
     image: '/assets/map/gtav.jpg',
     minX: -5639.9, maxX: 6804.7, minY: -4223.9, maxY: 8392.1,
   },
-  general: { appealUrl: '', serverDisplayName: '' },
+  general: { appealUrl: '', serverDisplayName: '', protectionLevel: 'balanced' },
 };
 
 async function getSettings(orgId) {

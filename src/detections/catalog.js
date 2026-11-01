@@ -194,6 +194,82 @@ const CATALOG = [
 
 const BY_KEY = Object.fromEntries(CATALOG.map((x) => [x.key, x]));
 
+/**
+ * Well-known exploited server events (cheat menus trigger them to give money, revive, jail, etc.).
+ * Each is only armed as a trap when its owning resource is NOT running, so legit players are never hit.
+ */
+const EXPLOIT_LIBRARY = [
+  { name: 'esx_ambulancejob:revive', unlessResource: 'esx_ambulancejob', note: 'Revive anyone / self' },
+  { name: 'esx_ambulancejob:setDeathStatus', unlessResource: 'esx_ambulancejob', note: 'Death status manipulation' },
+  { name: 'esx_policejob:handcuff', unlessResource: 'esx_policejob', note: 'Cuff any player' },
+  { name: 'esx_policejob:drag', unlessResource: 'esx_policejob', note: 'Drag any player' },
+  { name: 'esx_policejob:putInVehicle', unlessResource: 'esx_policejob', note: 'Force players into vehicles' },
+  { name: 'esx-qalle-jail:jailPlayer', unlessResource: 'esx-qalle-jail', note: 'Jail any player' },
+  { name: 'esx_jailer:sendToJail', unlessResource: 'esx_jailer', note: 'Jail any player' },
+  { name: 'esx_billing:sendBill', unlessResource: 'esx_billing', note: 'Spam bills to players' },
+  { name: 'esx_truckerjob:pay', unlessResource: 'esx_truckerjob', note: 'Money exploit' },
+  { name: 'esx_garbagejob:pay', unlessResource: 'esx_garbagejob', note: 'Money exploit' },
+  { name: 'esx_pizza:pay', unlessResource: 'esx_pizza', note: 'Money exploit' },
+  { name: 'esx_godirtyjob:pay', unlessResource: 'esx_godirtyjob', note: 'Money exploit' },
+  { name: 'esx_banksecurity:pay', unlessResource: 'esx_banksecurity', note: 'Money exploit' },
+  { name: 'esx_carthief:pay', unlessResource: 'esx_carthief', note: 'Money exploit' },
+  { name: 'esx_fueldelivery:pay', unlessResource: 'esx_fueldelivery', note: 'Money exploit' },
+  { name: 'esx_blanchisseur:washMoney', unlessResource: 'esx_blanchisseur', note: 'Money laundering exploit' },
+  { name: 'esx_vehicleshop:setVehicleOwned', unlessResource: 'esx_vehicleshop', note: 'Free vehicles' },
+  { name: 'esx_dmvschool:addLicense', unlessResource: 'esx_dmvschool', note: 'Free licenses' },
+  { name: 'esx_slotmachine:sv:2', unlessResource: 'esx_slotmachine', note: 'Casino money exploit' },
+  { name: 'lscustoms:payGarage', unlessResource: 'esx_lscustom', note: 'Negative payment exploit' },
+  { name: 'qb-ambulancejob:server:RevivePlayer', unlessResource: 'qb-ambulancejob', note: 'Revive anyone' },
+  { name: 'hospital:server:SetLaststandStatus', unlessResource: 'qb-ambulancejob', note: 'Last-stand manipulation' },
+  { name: 'police:server:JailPlayer', unlessResource: 'qb-policejob', note: 'Jail any player' },
+  { name: 'police:server:CuffPlayer', unlessResource: 'qb-policejob', note: 'Cuff any player' },
+  { name: 'qb-bankrobbery:server:setBankState', unlessResource: 'qb-bankrobbery', note: 'Bank state exploit' },
+  { name: 'sentinel:honeypot:giveMoney', note: 'Generic trap (never used by any script)' },
+  { name: 'sentinel:honeypot:adminMenu', note: 'Generic trap (never used by any script)' },
+];
+
+// Shape validation for editable block lists (Protection Rules page).
+const EVENT_RE = /^[\w:.\-@/]{1,128}$/;
+const NAME_RE = /^[\w-]{1,64}$/;
+const LIST_SANITIZERS = {
+  'honeypot_event.events': (v) => {
+    const out = [];
+    for (const e of v) {
+      const o = typeof e === 'string' ? { name: e } : e;
+      if (!o || typeof o.name !== 'string' || !EVENT_RE.test(o.name.trim())) continue;
+      const item = { name: o.name.trim() };
+      if (typeof o.unlessResource === 'string' && NAME_RE.test(o.unlessResource.trim())) item.unlessResource = o.unlessResource.trim();
+      if (typeof o.note === 'string' && o.note.trim()) item.note = o.note.trim().slice(0, 120);
+      if (!out.some((x) => x.name === item.name)) out.push(item);
+    }
+    return out.slice(0, 500);
+  },
+  'weapon_blacklist.weapons': (v) => [...new Set(v.filter((x) => typeof x === 'string' && NAME_RE.test(x.trim())).map((x) => x.trim().toUpperCase()))].slice(0, 500),
+  'blocked_model.models': (v) => [...new Set(v.filter((x) => (typeof x === 'string' && NAME_RE.test(x.trim())) || Number.isInteger(x)).map((x) => (typeof x === 'string' ? x.trim().toLowerCase() : x)))].slice(0, 1000),
+  'explosion_blocked_type.types': (v) => [...new Set(v.filter((x) => Number.isInteger(x) && x >= 0 && x <= 100))].sort((a, b) => a - b),
+};
+
+/** Protection strength presets: the action each detection gets at a given level. */
+const LEVELS = ['relaxed', 'balanced', 'strict', 'maximum'];
+const NEVER_BAN = new Set(['teleport', 'ac_heartbeat', 'explosion_distance', 'weapon_mismatch']);
+function presetAction(def, level) {
+  const d = def.defaults.action;
+  if (level === 'balanced') return d;
+  if (level === 'relaxed') {
+    if (!def.verified) return 'log';
+    return def.defaults.severity === 'critical' ? d : (d === 'log' ? 'log' : 'warn');
+  }
+  if (level === 'strict') {
+    if (!def.verified) return def.defaults.severity === 'high' ? 'kick' : d;
+    if (NEVER_BAN.has(def.key)) return d === 'log' ? 'warn' : 'kick';
+    return d === 'kick' ? 'ban' : d;
+  }
+  // maximum
+  if (!def.verified) return 'kick';
+  if (NEVER_BAN.has(def.key)) return 'kick';
+  return 'ban';
+}
+
 /** Deep-merge plain objects; arrays are replaced, not concatenated. */
 function merge(base, over) {
   if (over === undefined) return base;
@@ -228,7 +304,7 @@ function sanitizeOverride(key, ov) {
       if (v === undefined) continue;
       if (typeof dv === 'number' && Number.isFinite(v) && v >= 0) th[k] = v;
       else if (typeof dv === 'boolean' && typeof v === 'boolean') th[k] = v;
-      else if (Array.isArray(dv) && Array.isArray(v) && v.length <= 1000) th[k] = v;
+      else if (Array.isArray(dv) && Array.isArray(v) && v.length <= 1000) th[k] = LIST_SANITIZERS[`${key}.${k}`] ? LIST_SANITIZERS[`${key}.${k}`](v) : v;
       else if (dv && typeof dv === 'object' && !Array.isArray(dv) && v && typeof v === 'object') th[k] = v;
     }
     out.threshold = th;
@@ -244,4 +320,4 @@ function resolveConfig(overrides) {
   return map;
 }
 
-module.exports = { CATALOG, BY_KEY, CATEGORIES, ACTIONS, SEVERITIES, resolveConfig, sanitizeOverride, merge };
+module.exports = { CATALOG, BY_KEY, CATEGORIES, ACTIONS, SEVERITIES, resolveConfig, sanitizeOverride, merge, EXPLOIT_LIBRARY, LEVELS, presetAction };

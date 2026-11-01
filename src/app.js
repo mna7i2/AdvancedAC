@@ -20,6 +20,19 @@ function createApp() {
   app.use(cookieParser());
 
   app.get('/healthz', (req, res) => res.json({ ok: true }));
+
+  // CORS only for the in-game panel. Credentials (cookies) are never allowed cross-origin: the panel
+  // authenticates with a short-lived bearer session issued through the authenticated agent API.
+  const allowed = (o) => !!o && (config.nuiOriginRegex.test(o) || config.extraOrigins.includes(o));
+  app.use('/api/v1', (req, res, next) => {
+    const origin = req.get('origin');
+    if (allowed(origin) && !req.path.startsWith('/agent')) {
+      res.set({ 'Access-Control-Allow-Origin': origin, Vary: 'Origin', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-SAC-Request',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE', 'Access-Control-Max-Age': '600', 'Cross-Origin-Resource-Policy': 'cross-origin' });
+      if (req.method === 'OPTIONS') return res.status(204).end();
+    }
+    next();
+  });
   app.use('/api/v1/agent', require('./routes/agent').router);
 
   const dashboardApi = path.join(__dirname, 'routes', 'api.js');

@@ -11,13 +11,19 @@ const { COOKIE, resolveSession } = require('./middleware/auth');
  *         console:<id>  — console stream (requires console.view)
  */
 function attachSockets(httpServer) {
-  const io = new Server(httpServer, { serveClient: true, cors: { origin: false }, maxHttpBufferSize: 1e5 });
+  const config = require('./config');
+  const allowed = (o) => !!o && (config.nuiOriginRegex.test(o) || config.extraOrigins.includes(o));
+  const io = new Server(httpServer, {
+    serveClient: true, maxHttpBufferSize: 1e5,
+    cors: { origin: (o, cb) => cb(null, allowed(o)), credentials: false },
+  });
 
   io.use(async (socket, next) => {
     try {
       const raw = socket.handshake.headers.cookie || '';
       const m = raw.split(/;\s*/).find((c) => c.startsWith(COOKIE + '='));
-      const token = m ? decodeURIComponent(m.slice(COOKIE.length + 1)) : null;
+      const bearer = socket.handshake.auth && typeof socket.handshake.auth.token === 'string' ? socket.handshake.auth.token : null;
+      const token = bearer || (m ? decodeURIComponent(m.slice(COOKIE.length + 1)) : null);
       const s = await resolveSession(token);
       if (!s) return next(new Error('unauthenticated'));
       socket.data.user = s.user;

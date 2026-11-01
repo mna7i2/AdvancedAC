@@ -7,6 +7,7 @@ const PERMISSIONS = {
   'players.notes': 'Add admin notes',
   'players.monitor': 'Live monitoring and recording',
   'players.screenshot': 'Request screenshots',
+  'players.inventory': 'View player inventory',
   'players.actions': 'Freeze / heal / teleport / bring',
   'players.spectate': 'Spectate (in-game)',
   'players.kick': 'Kick players',
@@ -43,7 +44,7 @@ const DEFAULT_ROLES = [
   },
   {
     name: 'Moderator', rank: 40,
-    permissions: ['dashboard.view', 'players.view', 'players.notes', 'players.screenshot', 'players.actions',
+    permissions: ['dashboard.view', 'players.view', 'players.notes', 'players.screenshot', 'players.inventory', 'players.actions',
       'players.spectate', 'players.kick', 'players.ban', 'map.view', 'replay.view', 'detections.view',
       'bans.view', 'evidence.view', 'lookup.view', 'entities.cleanup', 'announce.send'],
   },

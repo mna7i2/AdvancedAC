@@ -25,8 +25,9 @@ function view(s, full = false) {
     maxPlayers: s.max_players, acVersion: s.ac_version, latestVersion: config.acLatestVersion, framework: s.framework,
     onesync: s.onesync, hostname: s.hostname, startedAt: s.status === 'online' ? s.started_at : null,
     lastHeartbeat: s.last_heartbeat, bound: !!s.fingerprint, keyPrefix: s.api_key_prefix, createdAt: s.created_at,
+    resources: s.resources,
   };
-  if (full) { out.fingerprint = s.fingerprint; out.ip = s.last_ip; out.resources = s.resources; }
+  if (full) { out.fingerprint = s.fingerprint; out.ip = s.last_ip; }
   return out;
 }
 

@@ -4,7 +4,8 @@ const db = require('../../db');
 const { can } = require('../../middleware/auth');
 const { audit } = require('../../lib/audit');
 const realtime = require('../../lib/realtime');
-const { CATALOG, BY_KEY, CATEGORIES, resolveConfig, sanitizeOverride } = require('../../detections/catalog');
+const { CATALOG, BY_KEY, CATEGORIES, resolveConfig, sanitizeOverride, LEVELS, presetAction, EXPLOIT_LIBRARY } = require('../../detections/catalog');
+const { getSettings, setSetting } = require('../../lib/settings');
 const enforcement = require('../../services/enforcement');
 const { h, parse, page, uuid, actor, z } = require('./_util');
 
@@ -102,6 +103,35 @@ router.post('/detections/config/bulk', can('detections.configure'), h(async (req
   await audit({ ...actor(req), action: 'detection.bulk', details: b });
   res.json({ ok: true, affected: keys.length });
 }));
+
+// ─── Protection strength (one click: sets the action of every detection) ───
+router.post('/detections/config/preset', can('detections.configure'), h(async (req, res) => {
+  const { level } = parse(z.object({ level: z.enum(LEVELS) }), req.body);
+  await db.tx(async (t) => {
+    for (const def of CATALOG) {
+      const cur = await t.one('SELECT config FROM detection_overrides WHERE org_id=$1 AND detection_key=$2', [req.user.orgId, def.key]);
+      const cfg = { ...(cur ? cur.config : {}) };
+      const action = presetAction(def, level);
+      if (action === def.defaults.action) delete cfg.action; else cfg.action = action;
+      cfg.enabled = cfg.enabled === false && level !== 'maximum' ? false : true;
+      if (cfg.enabled === true) delete cfg.enabled;
+      if (Object.keys(cfg).length) {
+        await t.query(`INSERT INTO detection_overrides(org_id, detection_key, config, updated_by) VALUES ($1,$2,$3,$4)
+          ON CONFLICT (org_id, detection_key) DO UPDATE SET config=EXCLUDED.config, updated_by=EXCLUDED.updated_by, updated_at=now()`,
+        [req.user.orgId, def.key, cfg, req.user.id]);
+      } else {
+        await t.query('DELETE FROM detection_overrides WHERE org_id=$1 AND detection_key=$2', [req.user.orgId, def.key]);
+      }
+    }
+  });
+  const general = (await getSettings(req.user.orgId)).general;
+  await setSetting(req.user.orgId, 'general', { ...general, protectionLevel: level });
+  await publishConfig(req.user.orgId);
+  await audit({ ...actor(req), action: 'detection.preset', details: { level } });
+  res.json({ ok: true, level });
+}));
+
+router.get('/detections/exploit-library', can('detections.view'), (req, res) => res.json(EXPLOIT_LIBRARY));
 
 router.get('/detections/config/export', can('detections.view'), h(async (req, res) => {
   const rows = await db.many('SELECT detection_key, config FROM detection_overrides WHERE org_id=$1 ORDER BY detection_key', [req.user.orgId]);

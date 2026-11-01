@@ -132,6 +132,19 @@ router.post('/players/:id/action', h(async (req, res) => {
   res.json({ commandId: id, status: r.status, result: r.result });
 }));
 
+// ─── Inventory (read live from the game server through the framework / inventory resource) ───
+router.post('/players/:id/inventory', can('players.inventory'), h(async (req, res) => {
+  const p = await ownPlayer(req, req.params.id);
+  const s = await db.one(`SELECT ps.id, ps.net_id, ps.server_id FROM player_sessions ps JOIN servers sv ON sv.id = ps.server_id
+                          WHERE ps.player_id=$1 AND ps.ended_at IS NULL AND ps.net_id IS NOT NULL AND sv.status='online' ORDER BY ps.started_at DESC LIMIT 1`, [p.id]);
+  if (!s) return res.status(409).json({ error: 'Player is not online — inventory is read live from the game server' });
+  const id = await commands.enqueue(s.server_id, 'inventory', { netId: s.net_id, sessionId: s.id }, req.user.name);
+  await audit({ ...actor(req), action: 'player.inventory_view', targetType: 'player', targetId: p.id });
+  const r = await commands.waitFor(id, 10000);
+  if (r.status !== 'done') return res.status(r.status === 'pending' ? 504 : 422).json({ error: (r.result && r.result.error) || 'The game server did not respond' });
+  res.json(r.result);
+}));
+
 router.post('/players/:id/ban', can('players.ban'), h(async (req, res) => {
   const p = await ownPlayer(req, req.params.id);
   const b = parse(z.object({ reason: z.string().trim().min(3).max(500), durationHours: z.number().int().min(0).max(87600),

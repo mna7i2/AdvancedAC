@@ -2,6 +2,8 @@
 // (Rockstar asset) — put your own at the configured path; calibration bounds are in Settings → Map.
 // Without an image, an honest coordinate grid is drawn so positions are still accurate.
 
+import { NUI, API_BASE } from './api.js';
+
 export class MapView {
   constructor(canvas, cfg) {
     this.c = canvas;
@@ -26,7 +28,9 @@ export class MapView {
     const img = new Image();
     img.onload = () => { this.img = img; this.imgOk = true; this.W = img.naturalWidth; this.H = img.naturalHeight; this.fit(); };
     img.onerror = () => { this.imgOk = false; this.fit(); };
-    img.src = this.cfg.image;
+    // In-game the panel runs on the cfx-nui origin: load the map image from the backend.
+    img.crossOrigin = 'anonymous';
+    img.src = NUI && this.cfg.image.startsWith('/') ? API_BASE + this.cfg.image : this.cfg.image;
   }
 
   destroy() { this._ro.disconnect(); this.dead = true; }

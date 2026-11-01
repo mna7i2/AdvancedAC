@@ -128,6 +128,7 @@ export default async function monitoring(el, ctx) {
     if (!tile || view !== 'live') return;
     let img = tile.querySelector('img');
     if (!img) { tile.querySelector('.wait')?.remove(); img = document.createElement('img'); tile.prepend(img); }
+    if (window.sacImageUrl) { window.sacImageUrl(`/api/v1/evidence/${f.evidenceId}/file`).then((u) => { img.src = u; }).catch(() => {}); return; }
     const next = new Image();
     next.onload = () => { img.src = next.src; };
     next.src = `/api/v1/evidence/${f.evidenceId}/file`;

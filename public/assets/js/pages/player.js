@@ -1,4 +1,4 @@
-import { api } from '../api.js';
+import { api, NUI } from '../api.js';
 import { html, icon, fmt, $, empty, riskBar, riskColor, actionBadge, sevBadge, verifiedBadge, banStatus, modal, toast, busy, lightbox, confirmDialog } from '../ui.js';
 import { weaponName, vehicleName } from '../gta.js';
 
@@ -41,7 +41,9 @@ export default async function player(el, ctx) {
       ${store.can('players.monitor') ? html`<a class="btn sm ${on ? '' : 'hidden'}" href="#/monitoring?player=${p.id}">${icon('monitor')}Monitor</a>` : ''}
       ${b('freeze', 'snow', 'Freeze', 'players.actions')}${b('unfreeze', 'zap', 'Unfreeze', 'players.actions')}${b('heal', 'heart', 'Heal', 'players.actions')}
       ${b('teleport_to', 'target', 'Go to', 'players.actions')}${b('bring', 'crosshair', 'Bring', 'players.actions')}
-      ${store.can('players.spectate') ? html`<button class="btn sm" disabled title="Spectating needs a game client: use /adv in-game">${icon('eye')}Spectate (in-game)</button>` : ''}
+      ${store.can('players.spectate') ? (NUI && on && p.online.server_id === NUI.serverId
+        ? html`<button class="btn sm" data-act="spectate">${icon('eye')}Spectate</button>`
+        : html`<button class="btn sm" disabled title="Spectating needs a game client: open this panel in-game with /adv">${icon('eye')}Spectate (in-game)</button>`) : ''}
       ${b('warn', 'alert', 'Warn', 'players.kick', 'warn')}${b('kick', 'logout', 'Kick', 'players.kick', 'warn')}
       ${store.can('players.ban') ? html`<button class="btn sm danger" data-act="ban">${icon('ban')}Ban</button>` : ''}
       ${store.can('players.unban') && activeBans.length ? html`<button class="btn sm success" data-act="unban" data-ban="${activeBans[0].id}">${icon('check')}Unban</button>` : ''}
@@ -74,7 +76,7 @@ export default async function player(el, ctx) {
           <div><span>Coordinates</span><b class="mono" style="font-size:12.5px">${st.x !== undefined ? `${Math.round(st.x)}, ${Math.round(st.y)}, ${Math.round(st.z)}` : '—'}</b></div>
           <div><span>Routing bucket</span><b>${st.b ?? 0}</b></div><div><span>Session</span><b>${fmt.dur((Date.now() - new Date(p.online.started_at)) / 1000)}</b></div></div>` : ''}
       </div></div>
-      <div class="tabs">${['overview', 'detections', 'sessions', 'bans', 'evidence', 'notes'].map((k) => html`<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${k[0].toUpperCase() + k.slice(1)}${counts[k] !== undefined ? html`<span class="n">${counts[k]}</span>` : ''}</button>`)}</div>
+      <div class="tabs">${['overview', ...(store.can('players.inventory') ? ['inventory'] : []), 'detections', 'sessions', 'bans', 'evidence', 'notes'].map((k) => html`<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${k[0].toUpperCase() + k.slice(1)}${counts[k] !== undefined ? html`<span class="n">${counts[k]}</span>` : ''}</button>`)}</div>
       <div id="tab"></div>`);
     renderTab();
   }
@@ -95,6 +97,11 @@ export default async function player(el, ctx) {
           ${store.can('players.ban') ? html`<div class="card"><div class="card-b row sp"><div><b>Reputation bypass</b><div class="muted small">Prevents automatic risk-escalation bans. Explicit detection bans still apply.</div></div>
             <label class="switch"><input type="checkbox" id="rep" ${p.reputationBypass ? 'checked' : ''}/><span></span></label></div></div>` : ''}
         </div></div>`);
+    } else if (tab === 'inventory') {
+      if (!p.online) { box.innerHTML = String(html`<div class="card">${empty('Player is offline', 'The inventory is read live from the game server while the player is online.', 'box')}</div>`); return; }
+      box.innerHTML = '<div class="skeleton" style="height:160px"></div>';
+      api.post(`/players/${p.id}/inventory`, {}, { quiet: true }).then((inv) => { if (tab === 'inventory') renderInventory(box, inv); })
+        .catch((e) => { box.innerHTML = String(html`<div class="card">${empty('Could not read the inventory', e.message, 'alert')}</div>`); });
     } else if (tab === 'detections') {
       box.innerHTML = String(p.detections.length ? html`<div class="card"><div class="table-wrap"><table class="t"><thead><tr><th>Time</th><th>Detection</th><th>Severity</th><th>Signal</th><th>Action</th><th>Risk</th><th>Details</th></tr></thead><tbody>
         ${p.detections.map((d) => html`<tr><td class="muted nowrap">${fmt.date(d.created_at)}</td><td><b>${d.detection_key}</b><div class="muted tiny">${d.category}</div></td><td>${sevBadge(d.severity)}</td>
@@ -120,6 +127,27 @@ export default async function player(el, ctx) {
     }
   }
 
+  function renderInventory(box, inv) {
+    let q = '';
+    const draw = () => {
+      const items = inv.items.filter((i) => !q || `${i.label} ${i.name}`.toLowerCase().includes(q));
+      $('#inv-items', box).innerHTML = String(items.length ? html`<table class="t"><thead><tr><th>Item</th><th>Name</th><th style="text-align:right">Count</th><th>Slot</th><th>Details</th></tr></thead><tbody>
+        ${items.map((i) => html`<tr><td><b>${i.label}</b></td><td class="mono muted">${i.name}</td><td class="num" style="text-align:right"><b>${fmt.num(i.count)}</b></td>
+          <td class="muted">${i.slot ?? '—'}</td><td class="mono muted small">${i.meta ? Object.entries(i.meta).map(([k, v]) => `${k}: ${v}`).join(' · ') : ''}</td></tr>`)}</tbody></table>`
+        : empty(q ? 'No matching items' : 'Inventory is empty', '', 'box'));
+    };
+    box.innerHTML = String(html`
+      <div class="row sp" style="margin-bottom:12px"><div class="muted small">Live snapshot from <b>${inv.source}</b>${inv.job ? html` · Job: <b>${inv.job.label || inv.job.name}</b>${inv.job.grade !== undefined ? ` (${inv.job.grade})` : ''}` : ''}${inv.truncated ? ' · first 300 items' : ''}</div>
+        <button class="btn sm" id="inv-refresh">${icon('refresh')}Refresh</button></div>
+      ${inv.accounts.length ? html`<div class="kv" style="margin-bottom:16px">${inv.accounts.map((a) => html`<div><span>${a.label}</span><b>${fmt.num(a.money)}</b></div>`)}</div>` : ''}
+      ${inv.weapons.length ? html`<div class="card" style="margin-bottom:16px"><div class="card-h"><h3>Weapons</h3><span class="muted small">${inv.weapons.length}</span></div><div class="card-b flush"><table class="t"><tbody>
+        ${inv.weapons.map((w) => html`<tr><td><b>${w.label}</b></td><td class="mono muted">${w.name}</td><td class="num" style="text-align:right">${w.ammo} ammo</td></tr>`)}</tbody></table></div></div>` : ''}
+      <div class="card"><div class="card-h"><h3>Items</h3><div class="search" style="width:220px">${icon('search')}<input class="input sm" id="inv-q" placeholder="Search items…"/></div></div><div class="card-b flush table-wrap" id="inv-items"></div></div>`);
+    draw();
+    $('#inv-q', box).addEventListener('input', (e) => { q = e.target.value.trim().toLowerCase(); draw(); });
+    $('#inv-refresh', box).addEventListener('click', () => renderTab());
+  }
+
   el.addEventListener('click', async (e) => {
     const tb = e.target.closest('[data-tab]');
     if (tb) { tab = tb.dataset.tab; el.querySelectorAll('[data-tab]').forEach((x) => x.classList.toggle('on', x === tb)); return renderTab(); }
@@ -135,6 +163,7 @@ export default async function player(el, ctx) {
     if (!btn) return;
     const act = btn.dataset.act;
     if (act === 'ban') return banModal({ id: p.id, name: p.name }, load);
+    if (act === 'spectate') { window.parent.postMessage({ type: 'sac:action', action: 'spectate', target: p.online.net_id }, '*'); return; }
     if (act === 'unban') {
       return modal({ title: `Unban ${p.name}`, submitLabel: 'Revoke ban', body: html`<p class="muted">Revokes ban <b class="mono">${btn.dataset.ban}</b> on all servers.</p><label class="field">Reason<input class="input" name="reason" required minlength="3" maxlength="500"/></label>`,
         async onSubmit(f) { await api.post(`/bans/${btn.dataset.ban}/revoke`, { reason: f.reason.value.trim() }); toast({ type: 'success', text: 'Ban revoked' }); load(); } });

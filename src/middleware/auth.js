@@ -6,13 +6,19 @@ const { effectivePermissions } = require('../lib/permissions');
 
 const COOKIE = 'sac_session';
 
-async function createSession(userId, ip, userAgent) {
+async function createSession(userId, ip, userAgent, ttlHours = config.sessionTtlHours) {
   const token = randomToken('sac_sess');
   await db.query(
     `INSERT INTO sessions(token_hash, user_id, ip, user_agent, expires_at)
      VALUES ($1,$2,$3,$4, now() + ($5 || ' hours')::interval)`,
-    [sha256(token), userId, ip, (userAgent || '').slice(0, 256), config.sessionTtlHours]);
+    [sha256(token), userId, ip, (userAgent || '').slice(0, 256), ttlHours]);
   return token;
+}
+
+/** Session token from the httpOnly cookie (browser) or `Authorization: Bearer` (in-game panel). */
+function tokenFrom(req) {
+  const m = (req.get('authorization') || '').match(/^Bearer (sac_sess_[\w-]+)$/);
+  return m ? m[1] : req.cookies[COOKIE];
 }
 
 function setSessionCookie(res, token) {
@@ -52,7 +58,7 @@ async function requireAuth(req, res, next) {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.get('x-sac-request') !== '1') {
       return res.status(403).json({ error: 'missing request header' });
     }
-    const s = await resolveSession(req.cookies[COOKIE]);
+    const s = await resolveSession(tokenFrom(req));
     if (!s) return res.status(401).json({ error: 'unauthenticated' });
     req.user = s.user;
     req.perms = s.perms;
