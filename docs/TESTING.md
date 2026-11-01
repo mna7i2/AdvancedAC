@@ -8,6 +8,9 @@
 | EventGuard | 7 | `tests/unit/eventguard_test.py` | rate limit، server-only، validate، عدم حظر أحداث السيرفر |
 | المرحلة 2 — الاتصال | 36 | `tests/sim/scenarios/stage2_connection.lua` | handshake، الجلسات، التيليمتري، الأوامر، الباند والطرد، كاش الباند والسيرفر offline، الترخيص |
 | المرحلة 3/4 — الكشف والتنفيذ | 53 | `tests/sim/scenarios/stage3_detections.lua` | كل كشوفات السيرفر، الإلغاء، الأدلة قبل الطرد، Safe zones، bypass، التصعيد، heartbeat، صلاحيات القائمة |
+| المرحلة 6: الحقيبة وقواعد الحماية | 17 | `tests/sim/scenarios/stage6_features.lua` | حقيبة ESX، حظر exploit من الموقع، الحماية من الإنذارات الكاذبة، مستويات القوة |
+| الوضع المحلي بدون باك إند | 8 | `tests/sim/scenarios/local_only.lua` | الحماية تشتغل من أول تشغيل بدون موقع |
+| لوحة `/adv` | 5 | `tests/sim/scenarios/panel_session.lua` | جلسة اللوحة داخل اللعبة للطاقم المربوط فقط |
 | الأمان | 26 | `tests/api/security_test.py` | عزل المنظمات، الصلاحيات، منع رفع الصلاحيات، CSRF، الجلسات، مفاتيح السيرفر، سلامة سجل التدقيق |
 
 بالإضافة: اختبار متصفح حقيقي (Chromium) لكل صفحات الداشبورد مع سيرفر "حي". الأزرار نفّذت أوامر فعلية ورجعت النتيجة: Screenshot، Freeze/Unfreeze، المراقبة، Replay، Console، وحفظ الإعدادات ووصولها للسيرفر بدون ريستارت. وانختبرت قائمة `/adv` كمان، ومعها اختبار XSS باسم لاعب خبيث.
