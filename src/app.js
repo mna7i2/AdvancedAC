@@ -39,6 +39,8 @@ function createApp() {
   if (require('fs').existsSync(dashboardApi)) app.use('/api/v1', require('./routes/api'));
 
   app.use('/api', (req, res) => res.status(404).json({ error: 'not found' }));
+  // The in-game panel (cfx-nui origin) loads the map image from here.
+  app.use('/assets/map', (req, res, next) => { res.set('Cross-Origin-Resource-Policy', 'cross-origin'); next(); });
   app.use(express.static(path.join(__dirname, '..', 'public'), { index: 'index.html', maxAge: 0 }));
 
   // eslint-disable-next-line no-unused-vars

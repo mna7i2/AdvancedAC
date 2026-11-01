@@ -32,7 +32,7 @@ const DEFAULTS = {
   map: {
     // World bounds of the map image (configurable calibration, see Settings → Map)
     image: '/assets/map/gtav.jpg',
-    minX: -5639.9, maxX: 6804.7, minY: -4223.9, maxY: 8392.1,
+    minX: -5709.9, maxX: 6734.7, minY: -4123.9, maxY: 8492.1,
   },
   general: { appealUrl: '', serverDisplayName: '', protectionLevel: 'balanced' },
   // Exempt zones (e.g. a military training area): detections listed are skipped inside the sphere.
