@@ -9,7 +9,7 @@ const realtime = require('../lib/realtime');
 const KINDS = new Set([
   'kick', 'ban_kick', 'screenshot', 'freeze', 'unfreeze', 'heal', 'teleport_to', 'bring', 'set_bucket',
   'announce', 'delete_vehicles', 'delete_peds', 'delete_objects', 'monitor_start', 'monitor_stop',
-  'console_exec', 'resource_action', 'config_reload', 'bans_sync', 'warn', 'inventory',
+  'console_exec', 'resource_action', 'config_reload', 'bans_sync', 'warn', 'inventory', 'mods',
 ]);
 const TTL_SEC = 120;
 

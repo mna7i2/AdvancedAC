@@ -145,6 +145,19 @@ router.post('/players/:id/inventory', can('players.inventory'), h(async (req, re
   res.json(r.result);
 }));
 
+// ─── Mods: resources running in the player's game vs this server (injected cheat menus) ───
+router.post('/players/:id/mods', can('players.mods'), h(async (req, res) => {
+  const p = await ownPlayer(req, req.params.id);
+  const s = await db.one(`SELECT ps.id, ps.net_id, ps.server_id FROM player_sessions ps JOIN servers sv ON sv.id = ps.server_id
+                          WHERE ps.player_id=$1 AND ps.ended_at IS NULL AND ps.net_id IS NOT NULL AND sv.status='online' ORDER BY ps.started_at DESC LIMIT 1`, [p.id]);
+  if (!s) return res.status(409).json({ error: 'Player is not online — mods are checked live inside their game' });
+  const id = await commands.enqueue(s.server_id, 'mods', { netId: s.net_id, sessionId: s.id }, req.user.name);
+  await audit({ ...actor(req), action: 'player.mods_check', targetType: 'player', targetId: p.id });
+  const r = await commands.waitFor(id, 15000);
+  if (r.status !== 'done') return res.status(r.status === 'pending' ? 504 : 422).json({ error: (r.result && r.result.error) || 'The game server did not respond' });
+  res.json(r.result);
+}));
+
 router.post('/players/:id/ban', can('players.ban'), h(async (req, res) => {
   const p = await ownPlayer(req, req.params.id);
   const b = parse(z.object({ reason: z.string().trim().min(3).max(500), durationHours: z.number().int().min(0).max(87600),

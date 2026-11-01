@@ -39,7 +39,7 @@ function createApp() {
   if (require('fs').existsSync(dashboardApi)) app.use('/api/v1', require('./routes/api'));
 
   app.use('/api', (req, res) => res.status(404).json({ error: 'not found' }));
-  app.use(express.static(path.join(__dirname, '..', 'public'), { index: 'index.html', maxAge: config.isProd ? '1h' : 0 }));
+  app.use(express.static(path.join(__dirname, '..', 'public'), { index: 'index.html', maxAge: 0 }));
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {

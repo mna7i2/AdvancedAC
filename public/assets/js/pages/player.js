@@ -76,7 +76,7 @@ export default async function player(el, ctx) {
           <div><span>Coordinates</span><b class="mono" style="font-size:12.5px">${st.x !== undefined ? `${Math.round(st.x)}, ${Math.round(st.y)}, ${Math.round(st.z)}` : '—'}</b></div>
           <div><span>Routing bucket</span><b>${st.b ?? 0}</b></div><div><span>Session</span><b>${fmt.dur((Date.now() - new Date(p.online.started_at)) / 1000)}</b></div></div>` : ''}
       </div></div>
-      <div class="tabs">${['overview', ...(store.can('players.inventory') ? ['inventory'] : []), 'detections', 'sessions', 'bans', 'evidence', 'notes'].map((k) => html`<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${k[0].toUpperCase() + k.slice(1)}${counts[k] !== undefined ? html`<span class="n">${counts[k]}</span>` : ''}</button>`)}</div>
+      <div class="tabs">${['overview', ...(store.can('players.inventory') ? ['inventory'] : []), ...(store.can('players.mods') ? ['mods'] : []), 'detections', 'sessions', 'bans', 'evidence', 'notes'].map((k) => html`<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${k[0].toUpperCase() + k.slice(1)}${counts[k] !== undefined ? html`<span class="n">${counts[k]}</span>` : ''}</button>`)}</div>
       <div id="tab"></div>`);
     renderTab();
   }
@@ -102,6 +102,11 @@ export default async function player(el, ctx) {
       box.innerHTML = '<div class="skeleton" style="height:160px"></div>';
       api.post(`/players/${p.id}/inventory`, {}, { quiet: true }).then((inv) => { if (tab === 'inventory') renderInventory(box, inv); })
         .catch((e) => { box.innerHTML = String(html`<div class="card">${empty('Could not read the inventory', e.message, 'alert')}</div>`); });
+    } else if (tab === 'mods') {
+      if (!p.online) { box.innerHTML = String(html`<div class="card">${empty('Player is offline', 'Mods are checked live inside the player\'s game while they are online.', 'box')}</div>`); return; }
+      box.innerHTML = '<div class="skeleton" style="height:160px"></div>';
+      api.post(`/players/${p.id}/mods`, {}, { quiet: true }).then((m) => { if (tab === 'mods') renderMods(box, m); })
+        .catch((e) => { box.innerHTML = String(html`<div class="card">${empty('Could not check mods', e.message, 'alert')}</div>`); });
     } else if (tab === 'detections') {
       box.innerHTML = String(p.detections.length ? html`<div class="card"><div class="table-wrap"><table class="t"><thead><tr><th>Time</th><th>Detection</th><th>Severity</th><th>Signal</th><th>Action</th><th>Risk</th><th>Details</th></tr></thead><tbody>
         ${p.detections.map((d) => html`<tr><td class="muted nowrap">${fmt.date(d.created_at)}</td><td><b>${d.detection_key}</b><div class="muted tiny">${d.category}</div></td><td>${sevBadge(d.severity)}</td>
@@ -146,6 +151,34 @@ export default async function player(el, ctx) {
     draw();
     $('#inv-q', box).addEventListener('input', (e) => { q = e.target.value.trim().toLowerCase(); draw(); });
     $('#inv-refresh', box).addEventListener('click', () => renderTab());
+  }
+
+  function renderMods(box, m) {
+    const STATUS = { injected: ['red', 'Injected — not from this server'], stopped: ['orange', 'Stopped on the player'], other: ['', 'Not running'], ok: ['green', 'OK'] };
+    let showOk = false;
+    const pure = m.pureLevel || 0;
+    const draw = () => {
+      const rows = m.resources.filter((r) => showOk || r.status !== 'ok');
+      $('#mods-list', box).innerHTML = String(rows.length ? html`<table class="t"><thead><tr><th>Resource</th><th>Status</th><th>On player</th><th>On server</th></tr></thead><tbody>
+        ${rows.map((r) => html`<tr><td class="mono"><b>${r.name}</b></td><td><span class="badge ${STATUS[r.status][0]}">${STATUS[r.status][1]}</span></td>
+          <td class="muted">${r.client}</td><td class="muted">${r.server}</td></tr>`)}</tbody></table>`
+        : empty('Nothing suspicious', 'Every resource running in this player\'s game comes from your server.', 'shieldCheck'));
+    };
+    box.innerHTML = String(html`
+      <div class="row sp" style="margin-bottom:12px"><div class="muted small">Live check of every resource running in the player's game · ${fmt.date(new Date(m.checkedAt))}</div>
+        <button class="btn sm" id="mods-refresh">${icon('refresh')}Check again</button></div>
+      <div class="grid g4" style="margin-bottom:16px">
+        <div class="card"><div class="card-b"><div class="muted small">Injected resources</div><div style="font-size:26px;font-weight:700;color:${m.counts.injected ? 'var(--red)' : 'var(--green)'}">${m.counts.injected}</div><div class="muted tiny">cheat menus usually show up here</div></div></div>
+        <div class="card"><div class="card-b"><div class="muted small">Stopped on the player</div><div style="font-size:26px;font-weight:700;color:${m.counts.stopped ? 'var(--orange)' : 'var(--green)'}">${m.counts.stopped}</div><div class="muted tiny">running on the server, not in their game</div></div></div>
+        <div class="card"><div class="card-b"><div class="muted small">Verified resources</div><div style="font-size:26px;font-weight:700">${m.counts.ok}</div><div class="muted tiny">match your server</div></div></div>
+        <div class="card"><div class="card-b"><div class="muted small">Modded game files (sv_pureLevel)</div><div style="font-size:26px;font-weight:700;color:${pure ? 'var(--green)' : 'var(--orange)'}">${pure ? 'Blocked · ' + pure : 'Allowed'}</div><div class="muted tiny">${pure ? 'FiveM refuses players with modified files' : 'add sv_pureLevel 1 to server.cfg'}</div></div></div>
+      </div>
+      ${m.counts.injected ? html`<div class="notice" style="margin-bottom:16px;border-color:var(--red)">${icon('alert')}<span>This player is running <b>${m.counts.injected}</b> resource(s) your server never started. That is how most cheat menus work. Take a screenshot as evidence, then kick or ban.</span></div>` : ''}
+      <div class="card"><div class="card-h"><h3>Resources</h3><label class="row small" style="gap:8px"><input type="checkbox" id="mods-ok"/>Show verified</label></div><div class="card-b flush table-wrap" id="mods-list"></div></div>
+      <div class="notice warn" style="margin-top:14px">${icon('info')}<span>FiveM sandboxes every script, so no anti-cheat resource can read files on the player's PC. This check shows what actually runs inside their game. To block modified game files completely, use <code>sv_pureLevel 1</code> (audio/graphics mods allowed) or <code>2</code> (nothing allowed).</span></div>`);
+    draw();
+    $('#mods-ok', box).addEventListener('change', (e) => { showOk = e.target.checked; draw(); });
+    $('#mods-refresh', box).addEventListener('click', () => renderTab());
   }
 
   el.addEventListener('click', async (e) => {
