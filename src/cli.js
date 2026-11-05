@@ -8,6 +8,7 @@
  *   node src/cli.js license:revoke --prefix SAC-ABCD
  *   node src/cli.js server:create --org <orgId> --name "Server"
  *   node src/cli.js audit:verify --org <orgId>
+ *   node src/cli.js platform:grant --email you@x.com      (vendor console access)
  */
 const db = require('./db');
 const { migrate } = require('./migrate');
@@ -57,8 +58,15 @@ async function run() {
       console.log(JSON.stringify(await verifyChain(a.org)));
       break;
     }
+    case 'platform:grant': {
+      need(a, 'email');
+      await migrate();
+      const r = await db.query('UPDATE admin_users SET platform_admin = true WHERE lower(email) = lower($1)', [a.email]);
+      console.log(r.rowCount ? `${a.email} is now a platform admin (Customers console)` : 'no account with that email');
+      break;
+    }
     default:
-      console.log('commands: migrate | org:create | license:create | license:revoke | server:create | audit:verify');
+      console.log('commands: migrate | org:create | license:create | license:revoke | server:create | audit:verify | platform:grant');
   }
 }
 

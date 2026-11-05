@@ -5,9 +5,9 @@ export default async function bans(el, ctx) {
   const { store } = ctx;
   const f = { status: 'active', q: '', automatic: '' };
   let offset = 0;
-  let tab = ctx.query.tab === 'appeals' ? 'appeals' : 'bans';
+  let tab = ['appeals', 'reviews'].includes(ctx.query.tab) ? ctx.query.tab : 'bans';
 
-  el.innerHTML = String(html`<div class="tabs"><button data-tab="bans">${icon('ban')}Bans</button><button data-tab="appeals">${icon('file')}Appeals <span class="n" id="n-app">0</span></button></div><div id="body"></div>`);
+  el.innerHTML = String(html`<div class="tabs"><button data-tab="bans">${icon('ban')}Bans</button><button data-tab="reviews">${icon('gavel')}Ban review <span class="n" id="n-rev">0</span></button><button data-tab="appeals">${icon('file')}Appeals <span class="n" id="n-app">0</span></button></div><div id="body"></div>`);
   const body = $('#body', el);
 
   async function showBans() {
@@ -65,16 +65,58 @@ export default async function bans(el, ctx) {
     await load();
   }
 
+  // Fair bans: players removed for a strong-but-not-certain reason wait here for a human decision.
+  async function showReviews() {
+    let status = 'open';
+    body.innerHTML = String(html`<div class="notice" style="margin-bottom:14px">${icon('gavel')}<span>These players were <b>removed, not banned</b>. Sentinel AC found strong evidence but leaves the ban decision to staff. Approve only when the evidence convinces you.</span></div>
+      <div class="btn-group" id="rst" style="margin-bottom:14px">${['open', 'approved', 'dismissed', 'all'].map((s) => html`<button data-v="${s}" class="${s === status ? 'on' : ''}">${s[0].toUpperCase() + s.slice(1)}</button>`)}</div><div id="rlist" class="col"></div>`);
+    const load = async () => {
+      const rows = await api.get('/reviews' + qs({ status }));
+      if (status === 'open') $('#n-rev', el).textContent = rows.length;
+      $('#rlist', body).innerHTML = String(rows.length ? html`${rows.map((r) => html`<div class="card"><div class="card-b">
+        <div class="row sp wrap"><div class="row wrap" style="gap:8px"><a href="#/players/${r.player_id}"><b>${r.player_name}</b></a><span class="badge orange">${r.reason}</span>
+            ${r.previous_bans ? html`<span class="badge red">${r.previous_bans} previous ban(s)</span>` : html`<span class="badge">first offence</span>`}<span class="muted small">${r.server_name || ''} · ${fmt.ago(r.updated_at)}</span></div>
+          <span class="badge ${r.status === 'open' ? 'blue' : r.status === 'approved' ? 'red' : 'green'}">${r.status}</span></div>
+        <div class="col" style="gap:6px;margin-top:12px">${(r.evidence || []).map((e) => html`<div class="row small" style="gap:8px;align-items:flex-start"><span class="dot ${e.verified ? 'off' : 'warn'}" style="margin-top:5px"></span>
+          <span class="grow"><b>${e.name}</b> — ${e.text}</span><span class="muted tiny nowrap">${fmt.date(e.at)}${e.verified ? ' · server-verified' : ' · client signal'}</span></div>`)}</div>
+        ${r.status === 'open' && store.can('players.ban') ? html`<div class="row" style="margin-top:14px;justify-content:flex-end;gap:8px">
+            <a class="btn sm" href="#/players/${r.player_id}">${icon('users')}Full profile</a>
+            <button class="btn sm" data-rdis="${r.id}">${icon('check')}Not guilty — dismiss</button>
+            <button class="btn sm danger" data-rban="${r.id}">${icon('ban')}Approve ban</button></div>`
+          : r.decided_by ? html`<div class="muted small" style="margin-top:10px">Decided by ${r.decided_by} ${fmt.ago(r.decided_at)}${r.ban_id ? html` · <a class="mono" href="#/bans/${r.ban_id}">${r.ban_id}</a>` : ''}${r.note ? ` · “${r.note}”` : ''}</div>` : ''}
+      </div></div>`)}` : html`<div class="card">${empty(status === 'open' ? 'Nothing to review' : 'No reviews', status === 'open' ? 'No player is waiting for a ban decision.' : '', 'gavel')}</div>`);
+    };
+    body.querySelectorAll('#rst button').forEach((b) => b.addEventListener('click', () => { status = b.dataset.v; body.querySelectorAll('#rst button').forEach((x) => x.classList.toggle('on', x === b)); load(); }));
+    body.onclick = (e) => {
+      const ban = e.target.closest('[data-rban]');
+      if (ban) {
+        modal({ title: 'Approve ban', submitLabel: 'Ban player', danger: true,
+          body: html`<label class="field">Duration<select class="input" name="d"><option value="24">24 hours</option><option value="72">3 days</option><option value="168" selected>7 days</option><option value="720">30 days</option><option value="0">Permanent</option></select></label>
+            <label class="field">Reason shown to the player (optional)<input class="input" name="r" maxlength="500" placeholder="keeps the detected reason when empty"/></label>`,
+          async onSubmit(f) { const r = await api.post(`/reviews/${ban.dataset.rban}/approve`, { durationHours: +f.d.value, ...(f.r.value.trim() ? { reason: f.r.value.trim() } : {}) }); toast({ type: 'success', text: `Banned · ${r.banId}` }); load(); } });
+        return;
+      }
+      const dis = e.target.closest('[data-rdis]');
+      if (dis) {
+        modal({ title: 'Dismiss — no ban', submitLabel: 'Dismiss',
+          body: html`<label class="field">Note (optional)<input class="input" name="n" maxlength="500" placeholder="e.g. lag, admin tool, false positive"/></label>`,
+          async onSubmit(f) { await api.post(`/reviews/${dis.dataset.rdis}/dismiss`, { note: f.n.value.trim() }); toast({ type: 'success', text: 'Dismissed — no ban' }); load(); } });
+      }
+    };
+    await load();
+  }
+
   async function show() {
     el.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
     body.onclick = null;
-    if (tab === 'bans') await showBans(); else await showAppeals();
+    if (tab === 'bans') await showBans(); else if (tab === 'reviews') await showReviews(); else await showAppeals();
   }
   el.addEventListener('click', (e) => {
     const tb = e.target.closest('[data-tab]'); if (tb) { tab = tb.dataset.tab; show(); return; }
     const tr = e.target.closest('tr[data-id]'); if (tr) ctx.navigate('/bans/' + tr.dataset.id);
   });
   api.get('/appeals?status=open', { quiet: true }).then((a) => { $('#n-app', el).textContent = a.length; }).catch(() => {});
+  api.get('/reviews/count', { quiet: true }).then((r) => { $('#n-rev', el).textContent = r.open; }).catch(() => {});
   await show();
   ctx.on('ban', debounce(() => { if (tab === 'bans') show(); }, 600));
 }

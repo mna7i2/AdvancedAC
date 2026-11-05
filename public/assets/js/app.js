@@ -11,6 +11,7 @@ const PAGES = [
   { path: '/replay', title: 'Session Replay', icon: 'play', perm: 'replay.view', mod: 'replay' },
   { group: 'Protection' },
   { path: '/detections', title: 'Detections', icon: 'radar', perm: 'detections.view', mod: 'detections', badge: 'detections' },
+  { path: '/control', title: 'Protection Control', icon: 'target', perm: 'detections.view', mod: 'control' },
   { path: '/rules', title: 'Protection Rules', icon: 'shieldCheck', perm: 'detections.view', mod: 'rules' },
   { path: '/bans', title: 'Bans', icon: 'ban', perm: 'bans.view', mod: 'bans', badge: 'appeals' },
   { path: '/lookup', title: 'Player Lookup', icon: 'search', perm: 'lookup.view', mod: 'lookup' },
@@ -23,11 +24,14 @@ const PAGES = [
   { path: '/discord', title: 'Discord Integration', icon: 'discord', perm: 'discord.manage', mod: 'discord' },
   { path: '/settings', title: 'Settings', icon: 'settings', perm: 'dashboard.view', mod: 'settings' },
   { path: '/audit', title: 'Audit Logs', icon: 'scroll', perm: 'audit.view', mod: 'audit' },
+  { group: 'Sentinel Business', perm: 'platform' },
+  { path: '/customers', title: 'Customers', icon: 'key', perm: 'platform', mod: 'customers' },
 ];
 const ROUTES = [
   ...PAGES.filter((p) => p.path),
   { path: '/players/:id', title: 'Player Profile', perm: 'players.view', mod: 'player', parent: '/players' },
   { path: '/bans/:id', title: 'Ban Details', perm: 'bans.view', mod: 'ban', parent: '/bans' },
+  { path: '/customers/:id', title: 'Customer', perm: 'platform', mod: 'customer', parent: '/customers' },
 ];
 
 // ─── Store ───
@@ -66,7 +70,7 @@ function renderLogin(message = '') {
 // ─── Shell ───
 function renderShell() {
   const nav = PAGES.map((p) => {
-    if (p.group) return html`<div class="nav-group">${p.group}</div>`;
+    if (p.group) return p.perm && !store.can(p.perm) ? '' : html`<div class="nav-group">${p.group}</div>`;
     if (!store.can(p.perm)) return '';
     return html`<a href="#${p.path}" data-path="${p.path}">${icon(p.icon)}<span>${p.title}</span>${p.badge ? html`<b class="count hidden" data-badge="${p.badge}"></b>` : ''}</a>`;
   });
@@ -83,11 +87,15 @@ function renderShell() {
       </div>
     </aside>
     <div class="main">
+      ${store.user.platform && store.user.platform.acting ? html`<div class="acting-bar">${icon('door')}<span>You are managing <b>${store.user.orgName}</b> with full control as Sentinel support. Everything you do is recorded in their audit log.</span>
+        <button class="btn sm" id="exit-acting">${icon('logout')}Back to my console</button></div>` : ''}
       <div class="topbar"><h1 id="title"></h1><div class="grow"></div><span class="live" id="live"><span class="dot"></span>Connecting…</span></div>
       <div class="content" id="content"></div>
     </div>
   </div>`);
   renderServerPicker();
+  const exitBtn = $('#exit-acting');
+  if (exitBtn) exitBtn.addEventListener('click', async () => { await api.post('/platform/exit'); location.hash = '#/customers'; location.reload(); });
   $('#srv').addEventListener('change', (e) => { setServer(e.target.value); route(); });
   $('#logout').addEventListener('click', async () => {
     if (NUI) { window.parent.postMessage({ type: 'sac:close' }, '*'); return; }
@@ -151,6 +159,11 @@ function connectSocket() {
   });
   s.on('ban', (b) => { if (!b.automatic) return; toast({ type: 'error', title: 'Automatic ban', text: `${b.player_name}: ${b.reason}` }); });
   s.on('activity', (a) => { if (a.kind === 'appeal') updateBadge('appeals', store.badges.appeals + 1); });
+  s.on('review', (r) => {
+    if (!r.created) return;
+    updateBadge('appeals', store.badges.appeals + 1);
+    toast({ type: 'warn', title: 'Ban review needed', text: `${r.playerName}: ${r.reason}` });
+  });
 }
 
 // ─── Router ───
@@ -211,9 +224,10 @@ async function route() {
 let routerBound = false;
 async function boot() {
   let me;
-  try { me = await api.get('/auth/me', { quiet: true }); } catch { renderLogin(); return; }
+  try { me = await api.get('/auth/me', { quiet: true }); } catch (e) { renderLogin(e.code === 'suspended' ? e.message : ''); return; }
   store.user = me.user;
   store.perms = new Set(me.permissions);
+  if (me.user.platform && me.user.platform.admin && !me.user.platform.acting) store.perms.add('platform');
   store.servers = me.servers;
   let saved = null;
   try { saved = localStorage.getItem('sac:server'); } catch { /* storage unavailable */ }
@@ -223,7 +237,10 @@ async function boot() {
   renderShell();
   if (store.socket) store.socket.close();
   connectSocket();
-  if (store.can('bans.appeals') || store.can('bans.view')) api.get('/appeals?status=open', { quiet: true }).then((a) => updateBadge('appeals', a.length)).catch(() => {});
+  if (store.can('bans.appeals') || store.can('bans.view')) {
+    Promise.all([api.get('/appeals?status=open', { quiet: true }).catch(() => []), api.get('/reviews/count', { quiet: true }).catch(() => ({ open: 0 }))])
+      .then(([a, r]) => updateBadge('appeals', a.length + r.open));
+  }
   if (!routerBound) { window.addEventListener('hashchange', route); routerBound = true; }
   route();
 }

@@ -25,7 +25,7 @@ function attachSockets(httpServer) {
       const bearer = socket.handshake.auth && typeof socket.handshake.auth.token === 'string' ? socket.handshake.auth.token : null;
       const token = bearer || (m ? decodeURIComponent(m.slice(COOKIE.length + 1)) : null);
       const s = await resolveSession(token);
-      if (!s) return next(new Error('unauthenticated'));
+      if (!s || s.suspended) return next(new Error('unauthenticated'));
       socket.data.user = s.user;
       socket.data.perms = s.perms;
       next();

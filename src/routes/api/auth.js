@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
 const db = require('../../db');
 const { audit } = require('../../lib/audit');
-const { createSession, setSessionCookie, requireAuth, COOKIE } = require('../../middleware/auth');
+const { createSession, setSessionCookie, requireAuth, COOKIE, SUSPENDED } = require('../../middleware/auth');
 const { validatePassword } = require('../../services/orgs');
 const { PERMISSIONS } = require('../../lib/permissions');
 const { CATALOG, CATEGORIES } = require('../../detections/catalog');
@@ -23,7 +23,8 @@ const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHe
 router.post('/auth/login', loginLimiter, h(async (req, res) => {
   if (req.get('x-sac-request') !== '1') return res.status(403).json({ error: 'missing request header' });
   const b = parse(z.object({ email: z.string().email().max(200), password: z.string().min(1).max(200) }), req.body);
-  const u = await db.one('SELECT * FROM admin_users WHERE lower(email) = lower($1)', [b.email]);
+  const u = await db.one(`SELECT a.*, o.status AS org_status FROM admin_users a JOIN organizations o ON o.id = a.org_id
+                          WHERE lower(a.email) = lower($1)`, [b.email]);
   const ok = await bcrypt.compare(b.password, u ? u.password_hash : DUMMY_HASH);
   if (!u || !u.active) return res.status(401).json({ error: 'Invalid email or password' });
   if (u.locked_until && new Date(u.locked_until) > new Date()) {
@@ -39,6 +40,7 @@ router.post('/auth/login', loginLimiter, h(async (req, res) => {
     if (fails >= MAX_FAILS) await audit({ orgId: u.org_id, actorType: 'system', actorName: 'Sentinel AC', action: 'auth.lockout', targetType: 'admin', targetId: u.id, ip: req.ip });
     return res.status(401).json({ error: 'Invalid email or password' });
   }
+  if (u.org_status === 'suspended' && !u.platform_admin) return res.status(403).json(SUSPENDED);
   await db.query('UPDATE admin_users SET failed_logins=0, locked_until=NULL, last_login=now() WHERE id=$1', [u.id]);
   const token = await createSession(u.id, req.ip, req.get('user-agent'));
   setSessionCookie(res, token);

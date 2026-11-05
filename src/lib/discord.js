@@ -111,6 +111,8 @@ function banEmbed(ban, serverName) {
       { name: 'Ban ID', value: '`' + ban.id + '`', inline: true },
       { name: 'Expires', value: ban.expires_at ? `<t:${Math.floor(new Date(ban.expires_at) / 1000)}:R>` : 'Permanent', inline: true },
       { name: 'Reason', value: ban.reason.slice(0, 1000) },
+      ...(Array.isArray(ban.evidence) && ban.evidence.length
+        ? [{ name: 'Evidence', value: ban.evidence.slice(0, 4).map((e) => `• ${e.name}: ${e.text}`).join('\n').slice(0, 1000) }] : []),
       ...(ban.detection_key ? [{ name: 'Detection', value: `${ban.detection_key} (${ban.category})`, inline: true }] : []),
       { name: 'Issued by', value: ban.issued_by_name, inline: true },
       { name: 'Identifiers', value: idsField(ban.identifiers) },
@@ -132,6 +134,7 @@ function detectionEmbed(det, playerName, identifiers, serverName) {
       { name: 'Action', value: det.action_taken, inline: true },
       { name: 'Verified', value: det.verified ? 'Server-verified' : 'Client signal (unverified)', inline: true },
       { name: 'Risk', value: `${Math.round(det.risk_after)}/100`, inline: true },
+      ...(det.explanation ? [{ name: 'Evidence', value: String(det.explanation).slice(0, 1000) }] : []),
       { name: 'Details', value: '```json\n' + JSON.stringify(det.details).slice(0, 900) + '\n```' },
       { name: 'Identifiers', value: idsField(identifiers) },
     ],

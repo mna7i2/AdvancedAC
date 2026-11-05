@@ -2,7 +2,7 @@
 import { toast } from './ui.js';
 
 export class ApiError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, code) { super(message); this.status = status; this.code = code; }
 }
 
 // In-game panel (/adv): the dashboard runs inside FiveM NUI and talks to the backend with a bearer
@@ -25,9 +25,9 @@ async function request(method, path, body, { quiet = false } = {}) {
     throw new ApiError(401, 'Session expired');
   }
   if (!res.ok) {
-    const msg = (data && data.error) || `Request failed (${res.status})`;
+    const msg = (data && (data.message || data.error)) || `Request failed (${res.status})`;
     if (!quiet) toast({ type: 'error', title: 'Error', text: msg });
-    throw new ApiError(res.status, msg);
+    throw new ApiError(res.status, msg, data && data.error);
   }
   return data;
 }

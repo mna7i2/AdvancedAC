@@ -18,5 +18,6 @@ router.use(require('./api/players').router);
 router.use(require('./api/detections').router);
 router.use(require('./api/evidence'));
 router.use(require('./api/admin'));
+router.use(require('./api/platform'));
 
 module.exports = router;

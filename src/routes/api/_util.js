@@ -23,6 +23,10 @@ const notFound = (what = 'not found') => Object.assign(new Error(what), { status
 const forbidden = (what = 'forbidden') => Object.assign(new Error(what), { status: 403 });
 
 /** Audit context from a dashboard request. */
-const actor = (req) => ({ orgId: req.user.orgId, actorType: 'admin', actorId: req.user.id, actorName: req.user.name, ip: req.ip });
+const actor = (req) => {
+  const acting = !!(req.user.platform && req.user.platform.acting);
+  return { orgId: req.user.orgId, actorType: acting ? 'platform' : 'admin', actorId: req.user.id,
+    actorName: acting ? `${req.user.name} (Sentinel support)` : req.user.name, ip: req.ip };
+};
 
 module.exports = { h, parse, page, uuid, notFound, forbidden, actor, z };

@@ -87,6 +87,7 @@ const HandshakeSchema = z.object({
   maxPlayers: z.number().int().min(0).max(4096),
   framework: z.string().max(32).default('standalone'),
   onesync: z.boolean(),
+  health: obj().optional(),
   resources: z.array(z.string().max(128)).max(2000).default([]),
   players: z.array(z.object({
     netId: z.number().int(), name: z.string().max(128), identifiers: ident,
@@ -105,10 +106,10 @@ router.post('/handshake', wrap(async (req, res) => {
   }
   server = await db.one(
     `UPDATE servers SET status='online', last_heartbeat=now(), last_ip=$2, ac_version=$3, hostname=$4,
-       max_players=$5, framework=$6, onesync=$7, resources=$8, player_count=$9
+       max_players=$5, framework=$6, onesync=$7, resources=$8, player_count=$9, health=COALESCE($10::jsonb, health)
      WHERE id=$1 RETURNING *`,
     [server.id, req.ip, b.acVersion, b.hostname, b.maxPlayers, b.framework, b.onesync,
-      JSON.stringify(b.resources.map((name) => ({ name, state: 'started' }))), b.players.length]);
+      JSON.stringify(b.resources.map((name) => ({ name, state: 'started' }))), b.players.length, b.health ? JSON.stringify(slimHealth(b.health)) : null]);
 
   // Resync sessions after a resource restart: close stale, open for current players.
   await db.query(`UPDATE player_sessions SET ended_at=now(), end_reason='resync'
@@ -155,7 +156,20 @@ const HeartbeatSchema = z.object({
   console: z.array(z.object({ t: z.number().int(), ch: z.string().max(64), line: z.string().max(2000) })).max(2000).default([]),
   acks: z.array(z.object({ id: z.number().int(), ok: z.boolean(), result: obj().optional() })).max(200).default([]),
   resources: z.array(z.object({ name: z.string().max(128), state: z.string().max(16) })).max(2000).optional(),
+  health: obj().optional(),
 });
+
+/** Keep only small scalar health fields reported by the resource. */
+function slimHealth(hh) {
+  const out = {};
+  for (const [k, v] of Object.entries(hh || {}).slice(0, 20)) {
+    if (k.length > 32) continue;
+    if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
+    else if (typeof v === 'boolean') out[k] = v;
+    else if (typeof v === 'string') out[k] = v.slice(0, 64);
+  }
+  return out;
+}
 
 router.post('/heartbeat', wrap(async (req, res) => {
   const b = parse(HeartbeatSchema, req.body);
@@ -163,9 +177,11 @@ router.post('/heartbeat', wrap(async (req, res) => {
   const wasOffline = server.status !== 'online';
   await db.query(
     `UPDATE servers SET status='online', last_heartbeat=now(), player_count=$2, last_ip=$3,
-       resources = COALESCE($4::jsonb, resources), started_at = now() - ($5 || ' seconds')::interval
+       resources = COALESCE($4::jsonb, resources), started_at = now() - ($5 || ' seconds')::interval,
+       health = COALESCE($6::jsonb, health)
      WHERE id=$1`,
-    [server.id, b.players.length, req.ip, b.resources ? JSON.stringify(b.resources) : null, b.uptime]);
+    [server.id, b.players.length, req.ip, b.resources ? JSON.stringify(b.resources) : null, b.uptime,
+      b.health ? JSON.stringify(slimHealth(b.health)) : null]);
   if (wasOffline) realtime.toOrg(server.org_id, 'server:status', { id: server.id, status: 'online' });
 
   await db.query(
@@ -219,6 +235,7 @@ router.post('/heartbeat', wrap(async (req, res) => {
 const ConnectingSchema = z.object({
   name: z.string().min(1).max(128), identifiers: ident,
   tokens: z.array(z.string().max(200)).max(40).default([]), endpoint: z.string().max(64).optional(),
+  staff: z.boolean().optional(),
 });
 
 router.post('/player/connecting', wrap(async (req, res) => {
@@ -229,6 +246,12 @@ router.post('/player/connecting', wrap(async (req, res) => {
     return res.json({ allow: false, message: 'Sentinel AC: a Rockstar license identifier is required.' });
   }
   const settings = await getSettings(server.org_id);
+  if (server.maintenance && !b.staff) {
+    const strong = b.identifiers.filter((i) => /^(license2?|steam|discord|fivem|xbl|live):/.test(i));
+    const staff = strong.length ? await db.one(
+      'SELECT 1 FROM admin_users WHERE org_id=$1 AND active AND linked_identifiers && $2::text[] LIMIT 1', [server.org_id, strong]) : null;
+    if (!staff) return res.json({ allow: false, message: `🔒 ${server.maintenance}` });
+  }
   const pl = await players.upsertPlayer(server.org_id, b.name, ids);
   const hit = await bans.findActiveBan(server.org_id, server.id, ids);
   if (hit) {

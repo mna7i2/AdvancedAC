@@ -104,19 +104,29 @@ router.post('/players/:id/reputation-bypass', can('players.ban'), h(async (req, 
 const ACTION_PERM = {
   kick: 'players.kick', warn: 'players.kick', screenshot: 'players.screenshot', freeze: 'players.actions', unfreeze: 'players.actions',
   heal: 'players.actions', teleport_to: 'players.actions', bring: 'players.actions', set_bucket: 'players.actions',
+  revive: 'players.control', kill: 'players.control', teleport_coords: 'players.control', set_job: 'players.control',
+  give_vehicle: 'players.control', strip_weapons: 'players.control',
 };
 
 router.post('/players/:id/action', h(async (req, res) => {
   const b = parse(z.object({
     action: z.enum(Object.keys(ACTION_PERM)), reason: z.string().max(300).optional(), message: z.string().max(300).optional(),
     bucket: z.number().int().min(0).max(65535).optional(),
+    x: z.number().finite().min(-20000).max(20000).optional(), y: z.number().finite().min(-20000).max(20000).optional(),
+    z: z.number().finite().min(-500).max(3000).optional(),
+    job: z.string().trim().regex(/^[\w-]{1,48}$/).optional(), grade: z.number().int().min(0).max(100).optional(),
+    model: z.string().trim().regex(/^[\w]{1,48}$/).optional(),
   }), req.body);
   if (!req.perms.has(ACTION_PERM[b.action])) throw forbidden('missing permission ' + ACTION_PERM[b.action]);
   const p = await ownPlayer(req, req.params.id);
   const s = await db.one(`SELECT ps.id, ps.net_id, ps.server_id FROM player_sessions ps JOIN servers sv ON sv.id = ps.server_id
                           WHERE ps.player_id=$1 AND ps.ended_at IS NULL AND ps.net_id IS NOT NULL AND sv.status='online' ORDER BY ps.started_at DESC LIMIT 1`, [p.id]);
   if (!s) return res.status(409).json({ error: 'Player is not online' });
-  const payload = { netId: s.net_id, sessionId: s.id, reason: b.reason, message: b.message, bucket: b.bucket, requestedBy: req.user.name };
+  const payload = { netId: s.net_id, sessionId: s.id, reason: b.reason, message: b.message, bucket: b.bucket, requestedBy: req.user.name,
+    x: b.x, y: b.y, z: b.z, job: b.job, grade: b.grade, model: b.model };
+  if (b.action === 'teleport_coords' && [b.x, b.y, b.z].some((v) => v === undefined)) return res.status(400).json({ error: 'x, y and z are required' });
+  if (b.action === 'set_job' && !b.job) return res.status(400).json({ error: 'job is required' });
+  if (b.action === 'give_vehicle' && !b.model) return res.status(400).json({ error: 'vehicle model is required' });
   if (b.action === 'teleport_to' || b.action === 'bring') {
     // The admin must be in-game on the same server (linked identifier).
     const me = await db.one(
@@ -127,7 +137,8 @@ router.post('/players/:id/action', h(async (req, res) => {
     payload.adminNetId = me.net_id;
   }
   const id = await commands.enqueue(s.server_id, b.action, payload, req.user.name);
-  await audit({ ...actor(req), action: 'player.' + b.action, targetType: 'player', targetId: p.id, details: { reason: b.reason, serverId: s.server_id } });
+  await audit({ ...actor(req), action: 'player.' + b.action, targetType: 'player', targetId: p.id,
+    details: { reason: b.reason, serverId: s.server_id, job: b.job, grade: b.grade, model: b.model, ...(b.action === 'teleport_coords' ? { x: b.x, y: b.y, z: b.z } : {}) } });
   const r = await commands.waitFor(id, b.action === 'screenshot' ? 15000 : 8000);
   res.json({ commandId: id, status: r.status, result: r.result });
 }));
@@ -141,6 +152,23 @@ router.post('/players/:id/inventory', can('players.inventory'), h(async (req, re
   const id = await commands.enqueue(s.server_id, 'inventory', { netId: s.net_id, sessionId: s.id }, req.user.name);
   await audit({ ...actor(req), action: 'player.inventory_view', targetType: 'player', targetId: p.id });
   const r = await commands.waitFor(id, 10000);
+  if (r.status !== 'done') return res.status(r.status === 'pending' ? 504 : 422).json({ error: (r.result && r.result.error) || 'The game server did not respond' });
+  res.json(r.result);
+}));
+
+router.post('/players/:id/inventory/edit', can('players.inventory_edit'), h(async (req, res) => {
+  const p = await ownPlayer(req, req.params.id);
+  const op = parse(z.object({
+    action: z.enum(['add', 'remove']), type: z.enum(['item', 'weapon', 'money']),
+    name: z.string().trim().regex(/^[\w.-]{1,64}$/), count: z.number().int().min(1).max(1000000).default(1), all: z.boolean().default(false),
+  }), req.body);
+  const s = await db.one(`SELECT ps.id, ps.net_id, ps.server_id FROM player_sessions ps JOIN servers sv ON sv.id = ps.server_id
+                          WHERE ps.player_id=$1 AND ps.ended_at IS NULL AND ps.net_id IS NOT NULL AND sv.status='online' ORDER BY ps.started_at DESC LIMIT 1`, [p.id]);
+  if (!s) return res.status(409).json({ error: 'Player is not online' });
+  const id = await commands.enqueue(s.server_id, 'inventory_edit', { netId: s.net_id, sessionId: s.id, op }, req.user.name);
+  const r = await commands.waitFor(id, 12000);
+  await audit({ ...actor(req), action: 'player.inventory_' + op.action, targetType: 'player', targetId: p.id,
+    details: { type: op.type, name: op.name, count: op.all ? 'all' : op.count, result: r.status === 'done' ? 'ok' : ((r.result && r.result.error) || r.status) } });
   if (r.status !== 'done') return res.status(r.status === 'pending' ? 504 : 422).json({ error: (r.result && r.result.error) || 'The game server did not respond' });
   res.json(r.result);
 }));

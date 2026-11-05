@@ -36,16 +36,16 @@ async function findActiveBan(orgId, serverId, identifiers) {
  */
 async function createBan({ orgId, serverId, scope = 'org', playerId, playerName, identifiers, reason,
   detectionKey = null, category = null, detectionId = null, automatic, issuedBy = null, issuedByName,
-  durationHours = 0, ip = null, serverName = null }) {
+  durationHours = 0, ip = null, serverName = null, evidence = [], actorType = null }) {
   const id = banId();
   const expires = durationHours > 0 ? new Date(Date.now() + durationHours * 3600000) : null;
   const ban = await db.tx(async (t) => {
     const b = await t.one(
       `INSERT INTO bans(id, org_id, server_id, scope, player_id, player_name, identifiers, reason, detection_key,
-                        category, detection_id, automatic, issued_by, issued_by_name, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+                        category, detection_id, automatic, issued_by, issued_by_name, expires_at, evidence)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
       [id, orgId, serverId, scope, playerId, playerName, JSON.stringify(identifiers), reason, detectionKey,
-        category, detectionId, automatic, issuedBy, issuedByName, expires]);
+        category, detectionId, automatic, issuedBy, issuedByName, expires, JSON.stringify(evidence || [])]);
     await t.query(
       `INSERT INTO ban_identifiers(ban_id, org_id, kind, value)
        SELECT $1, $2, k, v FROM unnest($3::text[], $4::text[]) AS u(k, v) ON CONFLICT DO NOTHING`,
@@ -68,7 +68,7 @@ async function createBan({ orgId, serverId, scope = 'org', playerId, playerName,
   for (const s of servers) await commands.enqueue(s.id, 'bans_sync', {}, 'system');
 
   await audit({
-    orgId, actorType: automatic ? 'system' : (issuedBy ? 'admin' : 'ingame_admin'), actorId: issuedBy,
+    orgId, actorType: actorType || (automatic ? 'system' : (issuedBy ? 'admin' : 'ingame_admin')), actorId: issuedBy,
     actorName: issuedByName, action: 'ban.create', targetType: 'player', targetId: playerId,
     details: { banId: id, reason, durationHours, detectionKey, scope }, ip,
   });
@@ -105,9 +105,11 @@ async function syncList(orgId, serverId) {
 }
 
 function formatBanMessage(template, ban, appealUrl) {
+  const ev = Array.isArray(ban.evidence) && ban.evidence[0] ? ban.evidence[0].text : '';
   return template
     .replace('{banId}', ban.id)
     .replace('{reason}', ban.reason)
+    .replace('{evidence}', ev || ban.reason)
     .replace('{expires}', ban.expires_at ? new Date(ban.expires_at).toUTCString() : 'Never')
     .replace('{appealUrl}', appealUrl || '');
 }

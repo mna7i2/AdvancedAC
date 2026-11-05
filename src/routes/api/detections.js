@@ -22,7 +22,7 @@ router.get('/detections', can('detections.view'), h(async (req, res) => {
   const { limit, offset } = page(req.query);
   const f = parse(z.object({
     serverId: uuid.optional(), key: z.string().max(64).optional(), category: z.string().max(32).optional(),
-    action: z.enum(['log', 'warn', 'kick', 'ban', 'suppressed', 'ignored']).optional(), verified: z.enum(['true', 'false']).optional(),
+    action: z.enum(['log', 'warn', 'kick', 'review', 'ban', 'suppressed', 'ignored']).optional(), verified: z.enum(['true', 'false']).optional(),
     playerId: z.coerce.number().int().optional(), q: z.string().max(64).optional(),
   }), req.query);
   const where = ['d.org_id = $1']; const args = [req.user.orgId];
@@ -101,6 +101,28 @@ router.post('/detections/config/bulk', can('detections.configure'), h(async (req
   });
   await publishConfig(req.user.orgId);
   await audit({ ...actor(req), action: 'detection.bulk', details: b });
+  res.json({ ok: true, affected: keys.length });
+}));
+
+// ─── Progressive punishments for many detections at once ───
+router.post('/detections/config/ladder', can('detections.configure'), h(async (req, res) => {
+  const b = parse(z.object({
+    keys: z.array(z.string().max(64)).max(80),
+    ladder: z.object({ enabled: z.boolean(), windowHours: z.number().int().min(1).max(2160).default(72),
+      steps: z.array(z.object({ action: z.enum(['log', 'warn', 'kick', 'review', 'ban']), hours: z.number().int().min(0).max(87600).optional() })).max(6) }),
+  }), req.body);
+  const keys = b.keys.filter((k) => BY_KEY[k]);
+  await db.tx(async (t) => {
+    for (const k of keys) {
+      const ov = sanitizeOverride(k, { ladder: b.ladder });
+      await t.query(
+        `INSERT INTO detection_overrides(org_id, detection_key, config, updated_by) VALUES ($1,$2,$3,$4)
+         ON CONFLICT (org_id, detection_key) DO UPDATE SET config = detection_overrides.config || EXCLUDED.config, updated_by=EXCLUDED.updated_by, updated_at=now()`,
+        [req.user.orgId, k, { ladder: ov.ladder }, req.user.id]);
+    }
+  });
+  await publishConfig(req.user.orgId);
+  await audit({ ...actor(req), action: 'detection.ladder', details: { keys, ladder: b.ladder } });
   res.json({ ok: true, affected: keys.length });
 }));
 

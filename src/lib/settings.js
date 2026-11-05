@@ -14,12 +14,17 @@ const DEFAULTS = {
     autoBanOnCritical: true,
     criticalRequiresVerifiedWithinHours: 24,
     escalationBanDuration: 0,       // hours, 0 = permanent
+    // What happens at critical risk: 'review' = kick + staff decides (fair default), 'ban' = automatic ban, 'off'.
+    escalationMode: 'review',
   },
   enforcement: {
     // Ban attempts from unverified signals are downgraded to this action.
     unverifiedBanFallback: 'kick',
     kickMessage: 'You were removed by Sentinel AC: {reason}',
-    banMessage: 'You are banned from this server.\nBan ID: {banId}\nReason: {reason}\nExpires: {expires}\nAppeal: {appealUrl}',
+    reviewMessage: 'You were removed by Sentinel AC while staff review your case: {reason}',
+    banMessage: 'You are banned from this server.\nBan ID: {banId}\nReason: {reason}\nEvidence: {evidence}\nExpires: {expires}\nAppeal: {appealUrl}',
+    // Language of the evidence sentence shown to players and staff: 'en' or 'ar'.
+    language: 'en',
     // Hardware-token-only matches against a ban: 'block' or 'review' (allow + alert)
     tokenOnlyMatch: 'review',
   },

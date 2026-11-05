@@ -21,7 +21,8 @@ const CATEGORIES = {
   client: 'Client Integrity',
 };
 
-const ACTIONS = ['log', 'warn', 'kick', 'ban'];
+const ACTIONS = ['log', 'warn', 'kick', 'review', 'ban'];
+const LADDER_ACTIONS = ['log', 'warn', 'kick', 'review', 'ban'];
 const SEVERITIES = ['low', 'medium', 'high', 'critical'];
 
 const d = (key, category, name, source, verified, description, defaults) => ({
@@ -290,6 +291,15 @@ function sanitizeOverride(key, ov) {
   if (Number.isFinite(ov.cooldown) && ov.cooldown >= 0 && ov.cooldown <= 86400) out.cooldown = Math.round(ov.cooldown);
   if (Number.isFinite(ov.banDuration) && ov.banDuration >= 0 && ov.banDuration <= 24 * 3650) out.banDuration = Math.round(ov.banDuration);
   if (ov.evidence && typeof ov.evidence.screenshot === 'boolean') out.evidence = { screenshot: ov.evidence.screenshot };
+  if (ov.ladder && typeof ov.ladder === 'object') {
+    // Progressive punishments: step N applies to the Nth offense within windowHours.
+    const steps = (Array.isArray(ov.ladder.steps) ? ov.ladder.steps : []).slice(0, 6)
+      .filter((st) => st && LADDER_ACTIONS.includes(st.action))
+      .map((st) => (st.action === 'ban' && Number.isFinite(st.hours) && st.hours >= 0 && st.hours <= 24 * 3650
+        ? { action: 'ban', hours: Math.round(st.hours) } : { action: st.action }));
+    const wh = Number(ov.ladder.windowHours);
+    out.ladder = { enabled: ov.ladder.enabled === true && steps.length > 0, windowHours: Number.isFinite(wh) && wh >= 1 && wh <= 24 * 90 ? Math.round(wh) : 72, steps };
+  }
   if (ov.whitelist && typeof ov.whitelist === 'object') {
     const wl = {};
     for (const k of Object.keys(def.defaults.whitelist)) {

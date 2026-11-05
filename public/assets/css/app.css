@@ -124,7 +124,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; 
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
 .help { color: var(--faint); font-size: 11.5px; }
 
-.switch { position: relative; width: 36px; height: 20px; flex: none; cursor: pointer; }
+.switch { position: relative; display: inline-block; vertical-align: middle; width: 36px; height: 20px; flex: none; cursor: pointer; }
 .switch input { opacity: 0; width: 0; height: 0; }
 .switch span { position: absolute; inset: 0; background: var(--line2); border-radius: 99px; transition: background .18s; }
 .switch span::before { content: ''; position: absolute; width: 14px; height: 14px; left: 3px; top: 3px; background: #c9d1df; border-radius: 50%; transition: transform .18s, background .18s; }
@@ -278,3 +278,17 @@ table.t td.num { font-variant-numeric: tabular-nums; }
 .img-thumb { width: 100%; aspect-ratio: 16/9; object-fit: cover; border-radius: 9px; border: 1px solid var(--line); background: var(--bg2); cursor: zoom-in; display: block; }
 .ev-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
 .lightbox img { max-width: 100%; border-radius: 10px; display: block; }
+
+/* Vendor: banner while managing a customer's dashboard */
+.acting-bar { display: flex; align-items: center; gap: 10px; padding: 9px 18px; background: rgba(155,124,240,.14); border-bottom: 1px solid rgba(155,124,240,.35); color: #ddd2ff; font-size: 12.5px; }
+.acting-bar svg { width: 16px; height: 16px; flex: none; }
+.acting-bar span { flex: 1; }
+
+/* Protection Control matrix */
+table.control td { vertical-align: middle; }
+table.control tr.off-row td:not(:first-child) { opacity: .45; }
+table.control tr.group-row td { background: var(--bg2); color: var(--text2); font-size: 12px; font-weight: 650; padding-top: 9px; padding-bottom: 9px; }
+table.control .input.sm { min-width: 128px; }
+table.control .btn.xs span { white-space: nowrap; }
+.card-h h3 svg { width: 16px; height: 16px; vertical-align: -3px; margin-right: 4px; }
+table.control .input.dim { opacity: .4; }

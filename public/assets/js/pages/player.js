@@ -47,7 +47,12 @@ export default async function player(el, ctx) {
       ${b('warn', 'alert', 'Warn', 'players.kick', 'warn')}${b('kick', 'logout', 'Kick', 'players.kick', 'warn')}
       ${store.can('players.ban') ? html`<button class="btn sm danger" data-act="ban">${icon('ban')}Ban</button>` : ''}
       ${store.can('players.unban') && activeBans.length ? html`<button class="btn sm success" data-act="unban" data-ban="${activeBans[0].id}">${icon('check')}Unban</button>` : ''}
-    </div>`;
+    </div>
+    ${store.can('players.control') ? html`<div class="row wrap" style="gap:8px;margin-top:8px">
+      ${b('revive', 'heart', 'Revive', 'players.control')}${b('kill', 'x', 'Kill', 'players.control')}
+      ${b('teleport_coords', 'map', 'Teleport to…', 'players.control')}${b('set_job', 'userCog', 'Set job…', 'players.control')}
+      ${b('give_vehicle', 'car', 'Give vehicle…', 'players.control')}${b('strip_weapons', 'trash', 'Take all weapons', 'players.control', 'warn')}
+    </div>` : ''}`;
   }
 
   function render() {
@@ -134,23 +139,55 @@ export default async function player(el, ctx) {
 
   function renderInventory(box, inv) {
     let q = '';
+    const edit = store.can('players.inventory_edit');
+    const ctl = (attrs, ico, title, cls = '') => html`<button class="btn xs ${cls}" ${attrs} title="${title}">${icon(ico)}</button>`;
     const draw = () => {
       const items = inv.items.filter((i) => !q || `${i.label} ${i.name}`.toLowerCase().includes(q));
-      $('#inv-items', box).innerHTML = String(items.length ? html`<table class="t"><thead><tr><th>Item</th><th>Name</th><th style="text-align:right">Count</th><th>Slot</th><th>Details</th></tr></thead><tbody>
+      $('#inv-items', box).innerHTML = String(items.length ? html`<table class="t"><thead><tr><th>Item</th><th>Name</th><th style="text-align:right">Count</th><th>Slot</th><th>Details</th>${edit ? html`<th></th>` : ''}</tr></thead><tbody>
         ${items.map((i) => html`<tr><td><b>${i.label}</b></td><td class="mono muted">${i.name}</td><td class="num" style="text-align:right"><b>${fmt.num(i.count)}</b></td>
-          <td class="muted">${i.slot ?? '—'}</td><td class="mono muted small">${i.meta ? Object.entries(i.meta).map(([k, v]) => `${k}: ${v}`).join(' · ') : ''}</td></tr>`)}</tbody></table>`
+          <td class="muted">${i.slot ?? '—'}</td><td class="mono muted small">${i.meta ? Object.entries(i.meta).map(([k, v]) => `${k}: ${v}`).join(' · ') : ''}</td>
+          ${edit ? html`<td class="nowrap" style="text-align:right">${ctl(`data-inv="add|item|${i.name}|1"`, 'plus', 'Add 1')}${ctl(`data-inv="remove|item|${i.name}|1"`, 'minus', 'Remove 1')}${ctl(`data-inv="remove|item|${i.name}|all"`, 'trash', 'Remove all', 'danger')}</td>` : ''}</tr>`)}</tbody></table>`
         : empty(q ? 'No matching items' : 'Inventory is empty', '', 'box'));
     };
     box.innerHTML = String(html`
       <div class="row sp" style="margin-bottom:12px"><div class="muted small">Live snapshot from <b>${inv.source}</b>${inv.job ? html` · Job: <b>${inv.job.label || inv.job.name}</b>${inv.job.grade !== undefined ? ` (${inv.job.grade})` : ''}` : ''}${inv.truncated ? ' · first 300 items' : ''}</div>
         <button class="btn sm" id="inv-refresh">${icon('refresh')}Refresh</button></div>
+      ${edit ? html`<div class="card" style="margin-bottom:16px"><div class="card-b"><form id="inv-form" class="row wrap" style="gap:8px">
+          <select class="input" name="type" style="max-width:130px"><option value="item">Item</option><option value="weapon">Weapon</option>${inv.accounts.length ? html`<option value="money">Money</option>` : ''}</select>
+          <input class="input" name="name" list="inv-names" placeholder="name, e.g. bread / WEAPON_PISTOL / bank" maxlength="64" style="max-width:300px" required/>
+          <datalist id="inv-names">${inv.items.map((i) => html`<option value="${i.name}">${i.label}</option>`)}${inv.weapons.map((w) => html`<option value="${w.name}">${w.label}</option>`)}${inv.accounts.map((a) => html`<option value="${a.name}">${a.label}</option>`)}</datalist>
+          <input class="input" name="count" type="number" min="1" max="1000000" value="1" style="max-width:120px" title="Amount (ammo for weapons)"/>
+          <button class="btn primary" name="act" value="add">${icon('plus')}Give</button>
+          <button class="btn" name="act" value="remove">${icon('minus')}Take</button>
+        </form><div class="muted tiny" style="margin-top:8px">Every change is logged in Audit Logs. For weapons the amount is the ammo.</div></div></div>` : ''}
       ${inv.accounts.length ? html`<div class="kv" style="margin-bottom:16px">${inv.accounts.map((a) => html`<div><span>${a.label}</span><b>${fmt.num(a.money)}</b></div>`)}</div>` : ''}
       ${inv.weapons.length ? html`<div class="card" style="margin-bottom:16px"><div class="card-h"><h3>Weapons</h3><span class="muted small">${inv.weapons.length}</span></div><div class="card-b flush"><table class="t"><tbody>
-        ${inv.weapons.map((w) => html`<tr><td><b>${w.label}</b></td><td class="mono muted">${w.name}</td><td class="num" style="text-align:right">${w.ammo} ammo</td></tr>`)}</tbody></table></div></div>` : ''}
+        ${inv.weapons.map((w) => html`<tr><td><b>${w.label}</b></td><td class="mono muted">${w.name}</td><td class="num" style="text-align:right">${w.ammo} ammo</td>
+          ${edit ? html`<td style="text-align:right;width:60px">${ctl(`data-inv="remove|weapon|${w.name}|1"`, 'trash', 'Take weapon', 'danger')}</td>` : ''}</tr>`)}</tbody></table></div></div>` : ''}
       <div class="card"><div class="card-h"><h3>Items</h3><div class="search" style="width:220px">${icon('search')}<input class="input sm" id="inv-q" placeholder="Search items…"/></div></div><div class="card-b flush table-wrap" id="inv-items"></div></div>`);
     draw();
     $('#inv-q', box).addEventListener('input', (e) => { q = e.target.value.trim().toLowerCase(); draw(); });
     $('#inv-refresh', box).addEventListener('click', () => renderTab());
+    if (!edit) return;
+    const run = async (op, btn) => {
+      try {
+        const fresh = await busy(btn, () => api.post(`/players/${p.id}/inventory/edit`, op, { quiet: true }));
+        toast({ type: 'success', text: `${op.action === 'add' ? 'Gave' : 'Took'} ${op.all ? 'all' : op.count} × ${op.name}` });
+        if (tab === 'inventory') renderInventory(box, fresh);
+      } catch (e) { toast({ type: 'error', text: e.message }); }
+    };
+    box.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-inv]'); if (!b) return;
+      const [action, type, name, n] = b.dataset.inv.split('|');
+      run({ action, type, name, count: n === 'all' ? 1 : +n, all: n === 'all' }, b);
+    });
+    $('#inv-form', box).addEventListener('submit', (e) => {
+      e.preventDefault();
+      const f = e.target; const action = (e.submitter && e.submitter.value) || 'add';
+      const name = f.name.value.trim(); const count = Math.max(1, Math.floor(+f.count.value || 1));
+      if (!/^[\w.-]{1,64}$/.test(name)) return toast({ type: 'error', text: 'Invalid name' });
+      run({ action, type: f.type.value, name, count }, e.submitter || f.querySelector('button'));
+    });
   }
 
   function renderMods(box, m) {
@@ -206,6 +243,35 @@ export default async function player(el, ctx) {
         body: html`<label class="field">${act === 'kick' ? 'Reason' : 'Message shown to the player'}<input class="input" name="msg" required maxlength="300"/></label>`,
         async onSubmit(f) { const r = await api.post(`/players/${p.id}/action`, { action: act, reason: f.msg.value, message: f.msg.value }); report(act, r); load(); } });
     }
+    if (act === 'teleport_coords') {
+      const st = (p.online && p.online.last_state) || {};
+      return modal({ title: `Teleport ${p.name}`, submitLabel: 'Teleport',
+        body: html`<div class="grid g3" style="gap:10px"><label class="field">X<input class="input" name="x" inputmode="decimal" value="${st.x !== undefined ? Math.round(st.x) : ''}"/></label>
+          <label class="field">Y<input class="input" name="y" inputmode="decimal" value="${st.y !== undefined ? Math.round(st.y) : ''}"/></label><label class="field">Z<input class="input" name="z" inputmode="decimal" value="${st.z !== undefined ? Math.round(st.z) : ''}"/></label></div>
+          <div class="row wrap" style="gap:6px;margin-top:10px">${[['Legion Square', 195, -934, 30], ['Pillbox Hospital', 298, -584, 43], ['Mission Row PD', 428, -981, 30], ['LS Airport', -1037, -2737, 20], ['Sandy Shores', 1850, 3690, 34], ['Paleto Bay', -448, 6008, 31]]
+            .map(([n, x, y, z]) => html`<button type="button" class="btn xs" data-place="${x},${y},${z}">${n}</button>`)}</div>`,
+        async onSubmit(f) {
+          const v = ['x', 'y', 'z'].map((k) => Number(String(f[k].value).replace(',', '.')));
+          if (!v.every(Number.isFinite)) { toast({ type: 'error', text: 'Enter X, Y and Z' }); return false; }
+          report('teleport', await api.post(`/players/${p.id}/action`, { action: 'teleport_coords', x: v[0], y: v[1], z: v[2] })); load();
+        } }).el.addEventListener('click', (e) => {
+        const pl = e.target.closest('[data-place]'); if (!pl) return;
+        const [x, y, z] = pl.dataset.place.split(','); const f = pl.closest('form'); f.x.value = x; f.y.value = y; f.z.value = z;
+      });
+    }
+    if (act === 'set_job') {
+      return modal({ title: `Set job — ${p.name}`, submitLabel: 'Set job',
+        body: html`<div class="grid g2" style="gap:10px"><label class="field">Job name<input class="input" name="job" required maxlength="48" placeholder="police, ambulance, mechanic…"/></label>
+          <label class="field">Grade<input class="input" name="grade" type="number" min="0" max="100" value="0"/></label></div>`,
+        async onSubmit(f) { report('set job', await api.post(`/players/${p.id}/action`, { action: 'set_job', job: f.job.value.trim(), grade: Math.max(0, +f.grade.value || 0) })); load(); } });
+    }
+    if (act === 'give_vehicle') {
+      return modal({ title: `Give vehicle — ${p.name}`, submitLabel: 'Spawn & seat player',
+        body: html`<label class="field">Vehicle model<input class="input" name="m" required maxlength="48" placeholder="adder, police, sultan…"/><span class="help">Spawned next to the player, who is put in the driver seat. Blocked models are refused.</span></label>`,
+        async onSubmit(f) { report('give vehicle', await api.post(`/players/${p.id}/action`, { action: 'give_vehicle', model: f.m.value.trim() })); } });
+    }
+    if (act === 'kill' && !(await confirmDialog(`Kill ${p.name}?`, 'The player dies immediately. Logged in the audit log.', 'Kill'))) return;
+    if (act === 'strip_weapons' && !(await confirmDialog(`Take all weapons from ${p.name}?`, 'Removes every weapon from the player (and from their ESX loadout / ox_inventory).', 'Take weapons'))) return;
     if (act === 'freeze' && !(await confirmDialog(`Freeze ${p.name}?`, 'The player will not be able to move until unfrozen.', 'Freeze', false))) return;
     const r = await busy(btn, () => api.post(`/players/${p.id}/action`, { action: act }));
     report(act, r);

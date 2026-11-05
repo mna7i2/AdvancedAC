@@ -48,7 +48,7 @@ router.get('/bans/:id', requireAuth, can('bans.view'), h(async (req, res) => {
     b.player_id ? db.many('SELECT id, reason, created_at, revoked_at FROM bans WHERE player_id=$1 AND id<>$2 ORDER BY created_at DESC', [b.player_id, id]) : [],
   ]);
   b.identifiers = (b.identifiers || []).map((i) => (['ip', 'token'].includes(i.kind) ? { ...i, value: i.value.slice(0, 10) + '…' } : i));
-  res.json({ ...b, detection, evidence, appeals, history });
+  res.json({ ...b, proof: b.evidence || [], detection, evidence, appeals, history });
 }));
 
 router.post('/bans/:id/revoke', requireAuth, can('players.unban'), h(async (req, res) => {
@@ -74,6 +74,49 @@ router.patch('/bans/:id', requireAuth, can('players.ban'), h(async (req, res) =>
 }));
 
 // ─── Appeals ───
+// ─── Ban review queue (fair bans: a human confirms before an uncertain ban) ───
+const reviews = require('../../services/reviews');
+const { identifiersOf } = require('../../services/players');
+
+router.get('/reviews', requireAuth, can('bans.view'), h(async (req, res) => {
+  const f = parse(z.object({ status: z.enum(['open', 'approved', 'dismissed', 'all']).default('open') }), req.query);
+  res.json(await reviews.list(req.user.orgId, f.status));
+}));
+
+router.get('/reviews/count', requireAuth, can('bans.view'), h(async (req, res) => {
+  res.json({ open: await reviews.countOpen(req.user.orgId) });
+}));
+
+router.post('/reviews/:id/approve', requireAuth, can('players.ban'), h(async (req, res) => {
+  const id = parse(z.coerce.number().int().positive(), req.params.id);
+  const b = parse(z.object({ durationHours: z.number().int().min(0).max(87600).default(0), reason: z.string().trim().max(500).optional(),
+    scope: z.enum(['org', 'server']).default('org') }), req.body);
+  const r = await reviews.get(req.user.orgId, id);
+  if (!r) throw notFound();
+  if (r.status !== 'open') return res.status(409).json({ error: 'This review was already decided' });
+  const p = await db.one('SELECT id, last_name FROM players WHERE id=$1 AND org_id=$2', [r.player_id, req.user.orgId]);
+  if (!p) throw notFound('player not found');
+  const a = actor(req);
+  const ban = await bans.createBan({ orgId: req.user.orgId, serverId: r.server_id, scope: b.scope, playerId: p.id, playerName: r.player_name,
+    identifiers: await identifiersOf(p.id), reason: b.reason || r.reason, detectionKey: r.detection_key, automatic: false,
+    issuedBy: req.user.id, issuedByName: a.actorName, actorType: a.actorType, durationHours: b.durationHours, ip: req.ip, evidence: r.evidence });
+  await reviews.close(id, 'approved', a.actorName, { banId: ban.id });
+  await audit({ ...a, action: 'review.approve', targetType: 'player', targetId: p.id, details: { reviewId: id, banId: ban.id, durationHours: b.durationHours } });
+  res.json({ ok: true, banId: ban.id });
+}));
+
+router.post('/reviews/:id/dismiss', requireAuth, can('players.ban', 'bans.appeals'), h(async (req, res) => {
+  const id = parse(z.coerce.number().int().positive(), req.params.id);
+  const b = parse(z.object({ note: z.string().trim().max(500).default('') }), req.body || {});
+  const r = await reviews.get(req.user.orgId, id);
+  if (!r) throw notFound();
+  if (r.status !== 'open') return res.status(409).json({ error: 'This review was already decided' });
+  const a = actor(req);
+  await reviews.close(id, 'dismissed', a.actorName, { note: b.note });
+  await audit({ ...a, action: 'review.dismiss', targetType: 'player', targetId: r.player_id, details: { reviewId: id, note: b.note } });
+  res.json({ ok: true });
+}));
+
 router.get('/appeals', requireAuth, can('bans.appeals', 'bans.view'), h(async (req, res) => {
   const status = parse(z.enum(['open', 'accepted', 'rejected', 'all']).default('open'), req.query.status);
   const rows = await db.many(

@@ -33,7 +33,7 @@ const config = {
   sessionTtlHours: parseInt(process.env.SESSION_TTL_HOURS || '12', 10),
   telemetryRetentionDays: parseInt(process.env.TELEMETRY_RETENTION_DAYS || '7', 10),
   serverOfflineAfterSec: 30,
-  acLatestVersion: '1.0.0',
+  acLatestVersion: '1.1.0',
   // Origins allowed to call the dashboard API with a bearer session (the in-game /adv panel runs on
   // https://cfx-nui-<resource>). Extra origins (comma separated) can be added for testing.
   nuiOriginRegex: new RegExp(process.env.NUI_ORIGIN_REGEX || '^https://cfx-nui-[a-z0-9_.-]+$', 'i'),

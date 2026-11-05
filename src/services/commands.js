@@ -9,7 +9,8 @@ const realtime = require('../lib/realtime');
 const KINDS = new Set([
   'kick', 'ban_kick', 'screenshot', 'freeze', 'unfreeze', 'heal', 'teleport_to', 'bring', 'set_bucket',
   'announce', 'delete_vehicles', 'delete_peds', 'delete_objects', 'monitor_start', 'monitor_stop',
-  'console_exec', 'resource_action', 'config_reload', 'bans_sync', 'warn', 'inventory', 'mods',
+  'console_exec', 'resource_action', 'config_reload', 'bans_sync', 'warn', 'inventory', 'inventory_edit', 'mods',
+  'revive', 'kill', 'teleport_coords', 'set_job', 'give_vehicle', 'strip_weapons', 'kick_all', 'heal_all', 'revive_all',
 ]);
 const TTL_SEC = 120;
 

@@ -25,7 +25,7 @@ function view(s, full = false) {
     maxPlayers: s.max_players, acVersion: s.ac_version, latestVersion: config.acLatestVersion, framework: s.framework,
     onesync: s.onesync, hostname: s.hostname, startedAt: s.status === 'online' ? s.started_at : null,
     lastHeartbeat: s.last_heartbeat, bound: !!s.fingerprint, keyPrefix: s.api_key_prefix, createdAt: s.created_at,
-    resources: s.resources,
+    resources: s.resources, maintenance: s.maintenance || null, health: s.health || {},
   };
   if (full) { out.fingerprint = s.fingerprint; out.ip = s.last_ip; }
   return out;
@@ -123,6 +123,31 @@ router.post('/servers/:id/cleanup', can('entities.cleanup'), h(async (req, res) 
   const id = await commands.enqueue(s.id, 'delete_' + b.kind, {}, req.user.name);
   await audit({ ...actor(req), action: 'server.cleanup', targetType: 'server', targetId: s.id, details: b });
   res.json(await commands.waitFor(id));
+}));
+
+// ─── Server-wide controls: maintenance lock, kick / heal / revive everyone ───
+router.post('/servers/:id/maintenance', can('server.control'), h(async (req, res) => {
+  const s = await ownServer(req, req.params.id);
+  const b = parse(z.object({ enabled: z.boolean(), message: z.string().trim().max(200).optional(), kickNow: z.boolean().default(false) }), req.body);
+  const msg = b.enabled ? (b.message || 'The server is closed for maintenance. Please come back later.') : null;
+  await db.query('UPDATE servers SET maintenance=$2 WHERE id=$1', [s.id, msg]);
+  let kicked = null;
+  if (b.enabled && b.kickNow) {
+    const id = await commands.enqueue(s.id, 'kick_all', { reason: msg, exceptStaff: true }, req.user.name);
+    const r = await commands.waitFor(id, 8000);
+    kicked = r.result && r.result.kicked;
+  }
+  await audit({ ...actor(req), action: b.enabled ? 'server.maintenance_on' : 'server.maintenance_off', targetType: 'server', targetId: s.id, details: { message: msg, kicked } });
+  res.json({ ok: true, maintenance: msg, kicked });
+}));
+
+router.post('/servers/:id/players-action', can('server.control'), h(async (req, res) => {
+  const s = await ownServer(req, req.params.id);
+  const b = parse(z.object({ action: z.enum(['kick_all', 'heal_all', 'revive_all']), reason: z.string().trim().max(200).optional(),
+    exceptStaff: z.boolean().default(true) }), req.body);
+  const id = await commands.enqueue(s.id, b.action, { reason: b.reason, exceptStaff: b.exceptStaff }, req.user.name);
+  await audit({ ...actor(req), action: 'server.' + b.action, targetType: 'server', targetId: s.id, details: b });
+  res.json(await commands.waitFor(id, 8000));
 }));
 
 module.exports = { router, ownServer };

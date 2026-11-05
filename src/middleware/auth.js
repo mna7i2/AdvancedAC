@@ -2,7 +2,7 @@
 const db = require('../db');
 const config = require('../config');
 const { sha256, randomToken } = require('../lib/crypto');
-const { effectivePermissions } = require('../lib/permissions');
+const { effectivePermissions, ALL } = require('../lib/permissions');
 
 const COOKIE = 'sac_session';
 
@@ -27,27 +27,45 @@ function setSessionCookie(res, token) {
   });
 }
 
-/** Resolve a session token to { user, perms } or null. Sliding expiry is refreshed at most every 5 min. */
+/**
+ * Resolve a session token to { user, perms } or null. Sliding expiry is refreshed at most every 5 min.
+ * Platform admins (the vendor) can "enter" a customer: the session then acts inside that customer's
+ * organization with every permission, and is audited as actor type 'platform'.
+ * Returns { suspended: true } for accounts of a suspended customer.
+ */
 async function resolveSession(token) {
   if (!token || typeof token !== 'string' || !token.startsWith('sac_sess_')) return null;
   const row = await db.one(
-    `SELECT s.token_hash, s.last_seen, u.id, u.org_id, u.email, u.display_name, u.active, u.extra_permissions,
-            u.denied_permissions, u.linked_identifiers, r.name AS role_name, r.rank AS role_rank, r.permissions AS role_permissions,
-            o.name AS org_name
+    `SELECT s.token_hash, s.last_seen, s.acting_org_id, u.id, u.org_id, u.email, u.display_name, u.active, u.platform_admin,
+            u.extra_permissions, u.denied_permissions, u.linked_identifiers, r.name AS role_name, r.rank AS role_rank,
+            r.permissions AS role_permissions, o.name AS org_name, o.status AS org_status, ao.name AS acting_org_name
      FROM sessions s JOIN admin_users u ON u.id = s.user_id JOIN roles r ON r.id = u.role_id JOIN organizations o ON o.id = u.org_id
+     LEFT JOIN organizations ao ON ao.id = s.acting_org_id
      WHERE s.token_hash = $1 AND s.expires_at > now()`, [sha256(token)]);
   if (!row || !row.active) return null;
+  if (row.org_status === 'suspended' && !row.platform_admin) return { suspended: true };
   if (Date.now() - new Date(row.last_seen).getTime() > 300000) {
     await db.query(`UPDATE sessions SET last_seen = now(), expires_at = now() + ($2 || ' hours')::interval WHERE token_hash = $1`,
       [row.token_hash, config.sessionTtlHours]);
   }
+  if (row.platform_admin && row.acting_org_id && row.acting_org_name) {
+    return {
+      user: { id: row.id, orgId: row.acting_org_id, orgName: row.acting_org_name, email: row.email, name: row.display_name,
+        role: 'Sentinel Support', rank: 1000, linkedIdentifiers: [],
+        platform: { admin: true, acting: true, homeOrgId: row.org_id, homeOrgName: row.org_name } },
+      perms: new Set(ALL), tokenHash: row.token_hash,
+    };
+  }
   const perms = effectivePermissions(row.role_permissions, row.extra_permissions, row.denied_permissions);
   return {
     user: { id: row.id, orgId: row.org_id, orgName: row.org_name, email: row.email, name: row.display_name,
-      role: row.role_name, rank: row.role_rank, linkedIdentifiers: row.linked_identifiers },
+      role: row.role_name, rank: row.role_rank, linkedIdentifiers: row.linked_identifiers,
+      platform: row.platform_admin ? { admin: true, acting: false, homeOrgId: row.org_id, homeOrgName: row.org_name } : null },
     perms: new Set(perms), tokenHash: row.token_hash,
   };
 }
+
+const SUSPENDED = { error: 'suspended', message: 'This account is suspended. Contact your Sentinel AC provider.' };
 
 /**
  * Dashboard API auth. CSRF defence: cookie is SameSite=strict AND every state-changing request must
@@ -59,6 +77,7 @@ async function requireAuth(req, res, next) {
       return res.status(403).json({ error: 'missing request header' });
     }
     const s = await resolveSession(tokenFrom(req));
+    if (s && s.suspended) return res.status(403).json(SUSPENDED);
     if (!s) return res.status(401).json({ error: 'unauthenticated' });
     req.user = s.user;
     req.perms = s.perms;
@@ -67,7 +86,11 @@ async function requireAuth(req, res, next) {
   } catch (e) { next(e); }
 }
 
+/** Vendor-only routes (customers, licenses, impersonation). */
+const requirePlatform = (req, res, next) =>
+  (req.user && req.user.platform && req.user.platform.admin ? next() : res.status(403).json({ error: 'forbidden' }));
+
 const can = (...perms) => (req, res, next) =>
   (perms.some((p) => req.perms.has(p)) ? next() : res.status(403).json({ error: 'forbidden', required: perms }));
 
-module.exports = { COOKIE, createSession, setSessionCookie, resolveSession, requireAuth, can };
+module.exports = { COOKIE, SUSPENDED, createSession, setSessionCookie, resolveSession, requireAuth, requirePlatform, can };

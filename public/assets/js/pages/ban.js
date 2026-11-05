@@ -27,6 +27,9 @@ export default async function ban(el, ctx) {
           </div>
           ${b.revoke_reason ? html`<div class="notice" style="margin-top:12px">${icon('info')}<span>Revoke reason: ${b.revoke_reason}</span></div>` : ''}
         </div></div>
+        ${b.proof && b.proof.length ? html`<div class="card"><div class="card-h"><h3>Why this ban</h3><span class="muted small">What the server measured</span></div><div class="card-b col" style="gap:8px">
+          ${b.proof.map((e) => html`<div class="row small" style="gap:8px;align-items:flex-start"><span class="dot ${e.verified ? 'off' : 'warn'}" style="margin-top:5px"></span>
+            <span class="grow"><b>${e.name}</b> — ${e.text}</span><span class="muted tiny nowrap">${fmt.date(e.at)}${e.verified ? ' · server-verified' : ' · client signal'}</span></div>`)}</div></div>` : ''}
         ${b.detection ? html`<div class="card"><div class="card-h"><h3>Detection evidence</h3><span class="row">${sevBadge(b.detection.severity)}${verifiedBadge(b.detection.verified)}${actionBadge(b.detection.action_taken)}</span></div><div class="card-b col">
           <div class="kv"><div><span>Detection</span><b>${b.detection_key}</b></div><div><span>Category</span><b>${b.category}</b></div><div><span>Risk at ban</span><b>${Math.round(b.detection.risk_after)}/100</b></div><div><span>Detected</span><b>${fmt.date(b.detection.created_at)}</b></div></div>
           ${b.detection.action_note ? html`<div class="notice">${icon('info')}<span>${b.detection.action_note}</span></div>` : ''}

@@ -159,6 +159,8 @@ router.put('/settings/:key', can('settings.manage'), h(async (req, res) => {
   }
   if (key === 'enforcement' && !['log', 'warn', 'kick'].includes(next.unverifiedBanFallback)) return res.status(400).json({ error: 'unverifiedBanFallback must be log, warn or kick' });
   if (key === 'enforcement' && !['block', 'review'].includes(next.tokenOnlyMatch)) return res.status(400).json({ error: 'tokenOnlyMatch must be block or review' });
+  if (key === 'enforcement' && !['en', 'ar'].includes(next.language)) return res.status(400).json({ error: 'language must be en or ar' });
+  if (key === 'risk' && !['off', 'review', 'ban'].includes(next.escalationMode)) return res.status(400).json({ error: 'escalationMode must be off, review or ban' });
   await setSetting(req.user.orgId, key, next);
   await publishConfig(req.user.orgId);
   await audit({ ...actor(req), action: 'settings.update', targetType: 'settings', targetId: key, details: { before: cur, after: next } });

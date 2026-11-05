@@ -1,5 +1,5 @@
 import { api, qs } from '../api.js';
-import { html, icon, fmt, $, empty, toast, confirmDialog, busy } from '../ui.js';
+import { html, icon, fmt, $, empty, toast, confirmDialog, busy, modal } from '../ui.js';
 import { timeChart, donut, PALETTE } from '../charts.js';
 
 const ACT_ICON = { join: ['green', 'door'], leave: ['', 'logout'], detection: ['orange', 'radar'], ban_auto: ['red', 'ban'], ban_manual: ['red', 'gavel'],
@@ -100,12 +100,18 @@ export default async function overview(el, ctx) {
   }
 
   // Quick actions: only rendered for permitted users; all wired to real commands.
-  function renderQuick() {
+  async function renderQuick() {
     const q = $('#quick', el);
     const s = store.server();
-    const canClean = store.can('entities.cleanup'); const canAnn = store.can('announce.send');
-    if (!s || (!canClean && !canAnn)) { q.classList.add('hidden'); return; }
+    const canClean = store.can('entities.cleanup'); const canAnn = store.can('announce.send'); const canCtl = store.can('server.control');
+    if (!s || (!canClean && !canAnn && !canCtl)) { q.classList.add('hidden'); return; }
+    const full = canCtl ? await api.get('/servers/' + s.id, { quiet: true }).catch(() => ({})) : {};
     q.innerHTML = String(html`<div class="card-h"><h3>Server actions</h3><span class="muted small">${s.name}</span></div><div class="card-b col">
+      ${canCtl ? html`<div class="row sp" style="padding:4px 0 8px;border-bottom:1px solid var(--line);margin-bottom:6px"><div><b>${full.maintenance ? '🔒 Server locked' : 'Server open'}</b>
+          <div class="muted tiny">${full.maintenance ? 'Only staff can join' : 'Lock it so only staff can join (maintenance)'}</div></div>
+          <button class="btn sm ${full.maintenance ? '' : 'danger'}" id="lock">${icon('lock')}${full.maintenance ? 'Unlock' : 'Lock server'}</button></div>
+        <div class="row" style="gap:8px"><button class="btn grow" data-all="revive_all">${icon('heart')}Revive everyone</button><button class="btn grow" data-all="heal_all">${icon('heart')}Heal everyone</button></div>
+        <button class="btn danger" data-all="kick_all">${icon('door')}Kick everyone (except staff)</button>` : ''}
       ${canClean ? html`<button class="btn" data-clean="vehicles">${icon('car')}Delete vehicles</button><button class="btn" data-clean="peds">${icon('person')}Delete peds</button>
       <button class="btn" data-clean="objects">${icon('box')}Delete objects</button>` : ''}
       ${canAnn ? html`<div class="col" style="margin-top:6px;gap:8px"><input class="input" id="ann-title" placeholder="Announcement title" maxlength="80"/>
@@ -115,6 +121,26 @@ export default async function overview(el, ctx) {
       if (!(await confirmDialog(`Delete all ${b.dataset.clean}?`, `This removes every networked ${b.dataset.clean.slice(0, -1)} on ${s.name}${b.dataset.clean === 'vehicles' ? ' (vehicles with a player driver are kept)' : ''}.`, 'Delete'))) return;
       const r = await busy(b, () => api.post(`/servers/${s.id}/cleanup`, { kind: b.dataset.clean }));
       toast(r.status === 'done' ? { type: 'success', text: `${r.result.deleted} ${b.dataset.clean} deleted` } : { type: 'error', text: r.status === 'pending' ? 'Server did not respond (offline?)' : (r.result && r.result.error) || 'Failed' });
+    }));
+    const lock = q.querySelector('#lock');
+    if (lock) lock.addEventListener('click', async () => {
+      const on = !full.maintenance;
+      if (on) {
+        modal({ title: 'Lock server (maintenance)', submitLabel: 'Lock server', danger: true,
+          body: html`<label class="field">Message for players trying to join<input class="input" name="m" maxlength="200" value="The server is closed for maintenance. Please come back later."/></label>
+            <label class="row small" style="gap:8px;margin-top:10px"><input type="checkbox" name="k" checked/>Kick everyone who is not staff now</label>`,
+          async onSubmit(f) { const r = await api.post(`/servers/${s.id}/maintenance`, { enabled: true, message: f.m.value.trim(), kickNow: f.k.checked });
+            toast({ type: 'success', text: `Server locked${r.kicked != null ? ` · ${r.kicked} kicked` : ''}` }); renderQuick(); } });
+      } else {
+        await busy(lock, () => api.post(`/servers/${s.id}/maintenance`, { enabled: false })); toast({ type: 'success', text: 'Server unlocked' }); renderQuick();
+      }
+    });
+    q.querySelectorAll('[data-all]').forEach((b) => b.addEventListener('click', async () => {
+      const a = b.dataset.all;
+      const label = { kick_all: 'Kick every player who is not staff?', heal_all: 'Heal every player?', revive_all: 'Revive every player?' }[a];
+      if (!(await confirmDialog(label, `On ${s.name}. Logged in the audit log.`, 'Confirm', a === 'kick_all'))) return;
+      const r = await busy(b, () => api.post(`/servers/${s.id}/players-action`, { action: a, reason: 'Kicked by staff' }));
+      toast(r.status === 'done' ? { type: 'success', text: `Done · ${Object.values(r.result || {})[0] ?? 0} player(s)` } : { type: 'error', text: r.status === 'pending' ? 'Server did not respond (offline?)' : (r.result && r.result.error) || 'Failed' });
     }));
     const ann = q.querySelector('#ann');
     if (ann) ann.addEventListener('click', async () => {

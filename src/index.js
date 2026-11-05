@@ -10,6 +10,9 @@ const db = require('./db');
 
 async function main() {
   await migrate();
+  // Optional: PLATFORM_ADMIN_EMAILS="a@x.com,b@y.com" grants the vendor console to these accounts.
+  const vendors = (process.env.PLATFORM_ADMIN_EMAILS || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
+  if (vendors.length) await db.query('UPDATE admin_users SET platform_admin = true WHERE lower(email) = ANY($1::text[])', [vendors]);
   const app = createApp();
   const server = http.createServer(app);
   attachSockets(server);
