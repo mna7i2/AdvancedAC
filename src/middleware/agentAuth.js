@@ -24,6 +24,11 @@ async function agentAuth(req, res, next) {
       return res.status(403).json({ error: 'fingerprint_mismatch', message: 'This API key is bound to another server. Reset the binding in the dashboard.' });
     }
 
+    // IP lock: the key only works from the customer's server IP (bound on first connect if not set).
+    if (server.ip_locked && server.allowed_ip && normalizeIp(req.ip) !== server.allowed_ip) {
+      return res.status(403).json({ error: 'ip_mismatch', message: `This license is locked to another server IP (${normalizeIp(req.ip)} is not allowed)` });
+    }
+
     let lc = licenseCache.get(server.id);
     if (!lc || Date.now() - lc.at > 60000) {
       lc = { at: Date.now(), result: await validateServerLicense(server) };
@@ -39,4 +44,10 @@ async function agentAuth(req, res, next) {
 
 function clearLicenseCache() { licenseCache.clear(); }
 
-module.exports = { agentAuth, clearLicenseCache };
+/** '::ffff:1.2.3.4' → '1.2.3.4' so IPv4 servers behind dual-stack sockets compare correctly. */
+function normalizeIp(ip) {
+  const s = String(ip || '').trim();
+  return s.startsWith('::ffff:') ? s.slice(7) : s;
+}
+
+module.exports = { agentAuth, clearLicenseCache, normalizeIp };

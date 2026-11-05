@@ -93,7 +93,8 @@ async function loadAll() {
     db.many('SELECT id, name, status, contact, notes, created_at FROM organizations ORDER BY created_at'),
     db.many('SELECT * FROM licenses ORDER BY created_at'),
     db.many(`SELECT id, org_id, name, status, last_heartbeat, player_count, max_players, ac_version, framework, onesync,
-                    health, fingerprint IS NOT NULL AS bound, hostname, maintenance, created_at FROM servers ORDER BY created_at`),
+                    health, fingerprint IS NOT NULL AS bound, hostname, maintenance, ip_locked, allowed_ip, host(last_ip) AS last_ip, created_at
+             FROM servers ORDER BY created_at`),
     db.many(`SELECT org_id, count(*)::int AS n FROM detections WHERE created_at > now() - interval '24 hours' GROUP BY org_id`),
     db.many(`SELECT org_id, count(*)::int AS n FROM bans WHERE created_at > now() - interval '24 hours' GROUP BY org_id`),
     db.many(`SELECT server_id, count(*)::int AS n FROM detections WHERE detection_key = 'ac_heartbeat' AND action_taken IN ('kick','ban')
@@ -118,6 +119,7 @@ async function loadAll() {
         id: s.id, name: s.name, status: s.status, lastHeartbeat: s.last_heartbeat, players: s.player_count, maxPlayers: s.max_players,
         acVersion: s.ac_version, framework: s.framework, onesync: s.onesync, bound: s.bound, hostname: s.hostname,
         maintenance: s.maintenance, health: s.health || {}, problems, level: worstLevel(problems), createdAt: s.created_at,
+        ipLocked: s.ip_locked, allowedIp: s.allowed_ip, lastIp: s.last_ip,
       };
     });
     const orgProblems = [];
@@ -139,7 +141,7 @@ async function loadAll() {
 }
 
 async function createCustomer({ serverName, ownerName, email, password, plan = 'standard', maxServers = 1, days = null,
-  contact = '', notes = '', createdBy = null }) {
+  contact = '', notes = '', createdBy = null, ip = null, ipLock = true }) {
   const name = serverName.trim();
   const login = (email && email.trim().toLowerCase()) || await suggestEmail(name);
   if (await db.one('SELECT 1 FROM admin_users WHERE lower(email) = lower($1)', [login])) {
@@ -154,11 +156,12 @@ async function createCustomer({ serverName, ownerName, email, password, plan = '
   await setSetting(org.id, 'general', { appealUrl: '', serverDisplayName: name, protectionLevel: 'balanced' });
   const lic = await license.createLicense(org.id, { plan, maxServers, days });
   const server = await orgs.createServer(org.id, name, 'Created by your Sentinel AC provider');
+  await db.query('UPDATE servers SET ip_locked=$2, allowed_ip=$3 WHERE id=$1', [server.id, !!ipLock, ip || null]);
   return {
     customer: { id: org.id, name },
     login: { url: config.publicUrl, email: owner.email, password: pw },
     license: { key: lic.key, plan: lic.plan, maxServers: lic.max_servers, expiresAt: lic.expires_at },
-    server: { id: server.id, name: server.name, apiKey: server.apiKey, cfg: serverCfgSnippet(server.apiKey) },
+    server: { id: server.id, name: server.name, apiKey: server.apiKey, cfg: serverCfgSnippet(server.apiKey), ipLocked: !!ipLock, ip: ip || null },
   };
 }
 

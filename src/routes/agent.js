@@ -14,7 +14,7 @@ const { audit } = require('../lib/audit');
 const { activity } = require('../lib/activity');
 const { getSettings } = require('../lib/settings');
 const { effectivePermissions } = require('../lib/permissions');
-const { agentAuth } = require('../middleware/agentAuth');
+const { agentAuth, normalizeIp } = require('../middleware/agentAuth');
 const players = require('../services/players');
 const bans = require('../services/bans');
 const commands = require('../services/commands');
@@ -98,6 +98,10 @@ const HandshakeSchema = z.object({
 router.post('/handshake', wrap(async (req, res) => {
   const b = parse(HandshakeSchema, req.body);
   let server = req.server;
+  if (server.ip_locked && !server.allowed_ip) {
+    server = await db.one('UPDATE servers SET allowed_ip=$2 WHERE id=$1 RETURNING *', [server.id, normalizeIp(req.ip)]);
+    await audit({ orgId: server.org_id, actorType: 'server', actorId: server.id, actorName: server.name, action: 'server.ip_bind', details: { ip: server.allowed_ip } });
+  }
   if (!server.fingerprint) {
     server = await db.one('UPDATE servers SET fingerprint=$2 WHERE id=$1 RETURNING *', [server.id, b.fingerprint]);
     await audit({ orgId: server.org_id, actorType: 'server', actorId: server.id, actorName: server.name, action: 'server.bind', details: { fingerprint: b.fingerprint } });

@@ -1,7 +1,7 @@
 // Vendor console: one customer — license, servers + problems, accounts, history and every control.
 import { api } from '../api.js';
 import { html, icon, fmt, $, empty, modal, toast, busy, confirmDialog } from '../ui.js';
-import { levelBadge, licenseBadge, credentialsModal, LEVEL } from './customers.js';
+import { levelBadge, licenseBadge, credentialsModal, downloadPackage, LEVEL } from './customers.js';
 
 export default async function customer(el, ctx) {
   const id = ctx.params.id;
@@ -42,14 +42,17 @@ export default async function customer(el, ctx) {
       </div>
 
       <div class="card" style="margin-bottom:16px"><div class="card-h"><h3>Servers</h3><span class="muted small">Health is reported by the anti-cheat every ~30 s</span></div>
-        <div class="card-b flush table-wrap">${c.servers.length ? html`<table class="t"><thead><tr><th>Server</th><th>Status</th><th>Players</th><th>Version</th><th>Setup</th><th>Problems</th><th></th></tr></thead><tbody>
+        <div class="card-b flush table-wrap">${c.servers.length ? html`<table class="t"><thead><tr><th>Server</th><th>Status</th><th>Players</th><th>Version</th><th>IP lock</th><th>Setup</th><th>Problems</th><th></th></tr></thead><tbody>
           ${c.servers.map((s) => html`<tr style="vertical-align:top"><td><b>${s.name}</b><div class="muted tiny">${s.hostname || ''}</div></td>
             <td><span class="badge ${s.status === 'online' ? 'green' : 'red'}">${s.status}</span><div class="muted tiny">${s.lastHeartbeat ? fmt.ago(s.lastHeartbeat) : 'never connected'}</div>${s.maintenance ? html`<div><span class="badge orange">${icon('lock')}locked</span></div>` : ''}</td>
             <td class="num">${s.players}/${s.maxPlayers || '—'}</td>
             <td>${s.acVersion || '—'}<div class="muted tiny">${s.framework || ''}</div></td>
+            <td class="small nowrap">${s.ipLocked ? html`<span class="badge green">${icon('lock')}${s.allowedIp || 'first connect'}</span>` : html`<span class="badge">off</span>`}${s.lastIp ? html`<div class="muted tiny">last: ${s.lastIp}</div>` : ''}</td>
             <td class="small">${s.lastHeartbeat ? html`OneSync ${s.onesync ? '✔' : '✖'} · Screenshots ${s.health.screenshot === false ? '✖' : s.health.screenshot ? '✔' : '?'} · Pure ${s.health.pureLevel ?? '?'}` : html`<span class="muted">—</span>`}</td>
             <td style="min-width:240px">${problemList(s.problems)}</td>
-            <td class="nowrap"><button class="btn xs" data-rotate="${s.id}" title="New API key (the old one stops working)">${icon('refresh')}New key</button></td></tr>`)}</tbody></table>` : empty('No servers', 'Add a server to get its API key.', 'server')}</div></div>
+            <td class="nowrap"><div class="col" style="gap:4px"><button class="btn xs primary" data-zip="${s.id}" title="Ready-to-install files with the license inside">${icon('download')}Download files</button>
+              <button class="btn xs" data-ip="${s.id}">${icon('lock')}IP lock</button>
+              <button class="btn xs" data-rotate="${s.id}" title="New API key (the old one stops working)">${icon('refresh')}New key</button></div></td></tr>`)}</tbody></table>` : empty('No servers', 'Add a server to get its API key.', 'server')}</div></div>
 
       <div class="grid g2" style="margin-bottom:16px">
         <div class="card"><div class="card-h"><h3>Accounts</h3></div><div class="card-b flush"><table class="t"><tbody>
@@ -99,12 +102,31 @@ export default async function customer(el, ctx) {
       return;
     }
     if (act === 'server') {
-      modal({ title: 'Add server', submitLabel: 'Create', body: String(html`<label class="field">Server name<input class="input" name="name" maxlength="64" required/></label>`),
+      modal({ title: 'Add server', submitLabel: 'Create', body: String(html`<label class="field">Server name<input class="input" name="name" maxlength="64" required/></label>
+          <label class="field">Server IP (optional)<input class="input" name="ip" maxlength="64" placeholder="empty = lock to the first IP that connects"/></label>
+          <label class="field">IP lock<select class="input" name="lock"><option value="1" selected>On</option><option value="0">Off</option></select></label>`),
         onSubmit: async (f) => {
-          const s = await api.post(`/platform/customers/${id}/servers`, { name: f.name.value.trim() });
+          const s = await api.post(`/platform/customers/${id}/servers`, { name: f.name.value.trim(), ipLock: f.lock.value === '1', ...(f.ip.value.trim() ? { ip: f.ip.value.trim() } : {}) });
           await load();
-          credentialsModal(`${s.name} — server key`, { server: s });
+          credentialsModal(`${s.name} — server key`, { server: s, customerId: id });
         } });
+      return;
+    }
+    const zb = e.target.closest('[data-zip]');
+    if (zb) {
+      if (!(await confirmDialog('Download server files?', 'A new key is created for these files: files you sent before stop working, so send the new .zip to the customer.', 'Download', false))) return;
+      zb.classList.add('loading');
+      try { await downloadPackage(id, zb.dataset.zip, {}); toast({ type: 'success', text: 'Downloaded — send the .zip to the customer' }); await load(); }
+      catch (err) { toast({ type: 'error', text: err.message }); } finally { zb.classList.remove('loading'); }
+      return;
+    }
+    const ipb = e.target.closest('[data-ip]');
+    if (ipb) {
+      const s = c.servers.find((x) => x.id === ipb.dataset.ip);
+      modal({ title: `IP lock — ${s.name}`, submitLabel: 'Save',
+        body: String(html`<label class="field">IP lock<select class="input" name="on"><option value="1" ${s.ipLocked ? 'selected' : ''}>On — the license works only from this IP</option><option value="0" ${s.ipLocked ? '' : 'selected'}>Off</option></select></label>
+          <label class="field">Allowed IP<input class="input" name="ip" value="${s.allowedIp || ''}" placeholder="empty = lock to the next IP that connects"/>${s.lastIp ? html`<span class="help">Last seen from ${s.lastIp}</span>` : ''}</label>`),
+        onSubmit: async (f) => { await api.patch(`/platform/customers/${id}/servers/${s.id}`, { ipLocked: f.on.value === '1', allowedIp: f.ip.value.trim() || null }); toast({ type: 'success', text: 'IP lock saved' }); await load(); } });
       return;
     }
     const rot = e.target.closest('[data-rotate]');
@@ -112,7 +134,7 @@ export default async function customer(el, ctx) {
       if (!(await confirmDialog('Generate a new API key?', 'The current key stops working immediately; the server must be updated with the new key.', 'Generate'))) return;
       const r = await api.post(`/platform/customers/${id}/servers/${rot.dataset.rotate}/rotate`);
       const s = c.servers.find((x) => x.id === rot.dataset.rotate);
-      credentialsModal('New server key', { server: { name: s ? s.name : '', ...r } });
+      credentialsModal('New server key', { server: { id: rot.dataset.rotate, name: s ? s.name : '', ipLocked: s && s.ipLocked, ip: s && s.allowedIp, ...r }, customerId: id });
       return load();
     }
     if (act === 'suspend') {

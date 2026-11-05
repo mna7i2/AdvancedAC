@@ -1,5 +1,5 @@
 // Vendor console: every customer (organization) that bought Sentinel AC, their servers and problems.
-import { api } from '../api.js';
+import { api, NUI, API_BASE } from '../api.js';
 import { html, icon, fmt, $, empty, modal, toast, busy, debounce, esc } from '../ui.js';
 
 export const LEVEL = { error: ['red', 'Problem'], warn: ['orange', 'Warning'], info: ['blue', 'Info'], ok: ['green', 'Healthy'] };
@@ -16,6 +16,21 @@ export function licenseBadge(l) {
 const copy = async (text) => {
   try { await navigator.clipboard.writeText(text); toast({ type: 'success', text: 'Copied' }); } catch { toast({ type: 'error', text: 'Copy failed — select the text manually' }); }
 };
+
+/** Downloads the ready-to-install AdvancedAC .zip for one customer server (license.lua inside). */
+export async function downloadPackage(customerId, serverId, body = {}) {
+  const res = await fetch(`${API_BASE}/api/v1/platform/customers/${customerId}/servers/${serverId}/package`, {
+    method: 'POST', credentials: NUI ? 'omit' : 'same-origin', body: JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json', 'X-SAC-Request': '1', ...(NUI ? { Authorization: 'Bearer ' + NUI.token } : {}) },
+  });
+  if (!res.ok) { let m = ''; try { m = (await res.json()).error; } catch { /* not json */ } throw new Error(m || 'Download failed'); }
+  const blob = await res.blob();
+  const name = ((res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/) || [])[1] || 'AdvancedAC.zip';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  return res.headers.get('X-SAC-Rotated') === '1';
+}
 
 /** Shows freshly created credentials once (passwords are never stored in clear). */
 export function credentialsModal(title, out) {
@@ -34,10 +49,18 @@ export function credentialsModal(title, out) {
         ${out.license ? html`<div><span>License</span><b style="font-size:12.5px">${out.license.plan} · ${out.license.maxServers} server(s) · ${out.license.expiresAt ? fmt.dateShort(out.license.expiresAt) : 'lifetime'}</b></div>` : ''}</div>` : ''}
       ${out.server && out.server.cfg ? html`<div class="muted small" style="margin-bottom:6px">Give the customer these lines for <b>server.cfg</b> (server: ${out.server.name}):</div>
         <textarea class="input mono" readonly style="width:100%;min-height:150px;font-size:11.5px">${out.server.cfg}</textarea>` : ''}
-      <div class="row" style="margin-top:12px;gap:8px"><button type="button" class="btn primary" data-copy-all>${icon('file')}Copy everything</button>
+      ${out.customerId && out.server && out.server.id ? html`<div class="notice" style="margin-top:12px">${icon('download')}<span><b>Easiest for the customer:</b> download the ready files — the license and key are already inside, and they work only on ${out.server.ipLocked ? (out.server.ip ? `the IP ${out.server.ip}` : 'the first server IP that connects') : 'this server'}. The customer just copies the folder and adds <code>ensure AdvancedAC</code>.</span></div>` : ''}
+      <div class="row" style="margin-top:12px;gap:8px">${out.customerId && out.server && out.server.id ? html`<button type="button" class="btn primary" data-zip>${icon('download')}Download server files (.zip)</button>` : ''}
+        <button type="button" class="btn ${out.customerId ? '' : 'primary'}" data-copy-all>${icon('file')}Copy everything</button>
         ${out.login ? html`<button type="button" class="btn" data-copy-pw>${icon('key')}Copy password</button>` : ''}</div>`),
   });
   m.el.querySelector('[data-copy-all]').addEventListener('click', () => copy(all));
+  const zipBtn = m.el.querySelector('[data-zip]');
+  if (zipBtn) zipBtn.addEventListener('click', async () => {
+    zipBtn.classList.add('loading');
+    try { await downloadPackage(out.customerId, out.server.id, { apiKey: out.server.apiKey, licenseKey: out.license ? out.license.key : undefined }); toast({ type: 'success', text: 'Files downloaded — send the .zip to the customer' }); }
+    catch (e) { toast({ type: 'error', text: e.message }); } finally { zipBtn.classList.remove('loading'); }
+  });
   const pw = m.el.querySelector('[data-copy-pw]'); if (pw) pw.addEventListener('click', () => copy(out.login.password));
   return m;
 }
@@ -106,17 +129,20 @@ export default async function customers(el, ctx) {
           <label class="field">Servers allowed<input class="input" name="maxServers" type="number" min="1" max="100" value="1"/></label>
           <label class="field">Duration<select class="input" name="days"><option value="7">7 days (trial)</option><option value="30" selected>30 days</option><option value="90">90 days</option><option value="180">180 days</option><option value="365">1 year</option><option value="">Lifetime</option></select></label>
           <label class="field">Contact (optional)<input class="input" name="contact" maxlength="200" placeholder="Discord / phone"/></label>
+          <label class="field">Server IP (optional)<input class="input" name="ip" maxlength="64" placeholder="empty = lock to the first IP that connects"/></label>
+          <label class="field">IP lock<select class="input" name="ipLock"><option value="1" selected>On — the license works only on that IP</option><option value="0">Off</option></select></label>
           <label class="field" style="grid-column:1/-1">Notes (optional)<textarea class="input" name="notes" maxlength="2000" style="min-height:60px" placeholder="Price paid, payment method…"></textarea></label>
         </div>
         <div class="notice" style="margin-top:12px">${icon('key')}<span>A strong password, a license and the server API key are created automatically. You get everything ready to send to the customer.</span></div>`),
       onSubmit: async (f) => {
         const body = { serverName: f.serverName.value.trim(), email: f.email.value.trim(), plan: f.plan.value, maxServers: Math.max(1, +f.maxServers.value || 1),
-          days: f.days.value ? +f.days.value : null, contact: f.contact.value.trim(), notes: f.notes.value.trim() };
+          days: f.days.value ? +f.days.value : null, contact: f.contact.value.trim(), notes: f.notes.value.trim(),
+          ipLock: f.ipLock.value === '1', ...(f.ip.value.trim() ? { ip: f.ip.value.trim() } : {}) };
         if (body.serverName.length < 2) { toast({ type: 'error', text: 'Enter the server name' }); return false; }
         const out = await api.post('/platform/customers', body);
         toast({ type: 'success', text: `${out.customer.name} created` });
         await load();
-        credentialsModal(`${out.customer.name} — ready to send`, out);
+        credentialsModal(`${out.customer.name} — ready to send`, { ...out, customerId: out.customer.id });
         return true;
       },
     });

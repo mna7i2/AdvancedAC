@@ -6,7 +6,13 @@ const { audit } = require('../../lib/audit');
 const { requirePlatform } = require('../../middleware/auth');
 const platform = require('../../services/platform');
 const orgs = require('../../services/orgs');
+const net = require('net');
+const { sha256, randomToken } = require('../../lib/crypto');
+const { buildPackage, templateInfo } = require('../../services/package');
+const { clearLicenseCache } = require('../../middleware/agentAuth');
 const { h, parse, uuid, notFound, z } = require('./_util');
+
+const ipField = z.string().trim().max(64).refine((v) => v === '' || net.isIP(v) !== 0, 'invalid IP address');
 
 /**
  * Vendor console: customers (organizations), their licenses, servers and problems.
@@ -68,11 +74,13 @@ const NewCustomer = z.object({
   days: z.number().int().min(1).max(3650).nullable().default(30),
   contact: z.string().trim().max(200).default(''),
   notes: z.string().trim().max(2000).default(''),
+  ip: ipField.optional(),
+  ipLock: z.boolean().default(true),
 });
 
 router.post('/platform/customers', h(async (req, res) => {
   const b = parse(NewCustomer, req.body);
-  const out = await platform.createCustomer({ ...b, email: b.email || null, password: b.password || null, createdBy: req.user.id });
+  const out = await platform.createCustomer({ ...b, email: b.email || null, password: b.password || null, ip: b.ip || null, createdBy: req.user.id });
   await auditBoth(req, out.customer.id, 'platform.customer_create',
     { name: out.customer.name, email: out.login.email, plan: out.license.plan, maxServers: out.license.maxServers, expiresAt: out.license.expiresAt });
   res.status(201).json(out);
@@ -138,10 +146,50 @@ router.post('/platform/customers/:id/reset-password', h(async (req, res) => {
 
 router.post('/platform/customers/:id/servers', h(async (req, res) => {
   const o = await customer(req.params.id);
-  const b = parse(z.object({ name: z.string().trim().min(2).max(64) }), req.body);
+  const b = parse(z.object({ name: z.string().trim().min(2).max(64), ip: ipField.optional(), ipLock: z.boolean().default(true) }), req.body);
   const s = await orgs.createServer(o.id, b.name, 'Created by your Sentinel AC provider');
-  await auditBoth(req, o.id, 'platform.server_create', { serverId: s.id, name: s.name });
-  res.status(201).json({ id: s.id, name: s.name, apiKey: s.apiKey, cfg: platform.serverCfgSnippet(s.apiKey) });
+  await db.query('UPDATE servers SET ip_locked=$2, allowed_ip=$3 WHERE id=$1', [s.id, b.ipLock, b.ip || null]);
+  await auditBoth(req, o.id, 'platform.server_create', { serverId: s.id, name: s.name, ipLock: b.ipLock, ip: b.ip || null });
+  res.status(201).json({ id: s.id, name: s.name, apiKey: s.apiKey, cfg: platform.serverCfgSnippet(s.apiKey), ipLocked: b.ipLock, ip: b.ip || null });
+}));
+
+// ─── IP lock of a customer server ───
+router.patch('/platform/customers/:id/servers/:sid', h(async (req, res) => {
+  const o = await customer(req.params.id);
+  parse(uuid, req.params.sid);
+  const b = parse(z.object({ ipLocked: z.boolean().optional(), allowedIp: ipField.nullable().optional() }), req.body);
+  const s = await db.one('SELECT * FROM servers WHERE id=$1 AND org_id=$2', [req.params.sid, o.id]);
+  if (!s) throw notFound('server not found');
+  const locked = b.ipLocked ?? s.ip_locked;
+  const ip = b.allowedIp === undefined ? s.allowed_ip : (b.allowedIp || null);
+  await db.query('UPDATE servers SET ip_locked=$2, allowed_ip=$3 WHERE id=$1', [s.id, locked, ip]);
+  clearLicenseCache();
+  await auditBoth(req, o.id, 'platform.server_ip_lock', { serverId: s.id, ipLocked: locked, ip });
+  res.json({ ok: true, ipLocked: locked, allowedIp: ip });
+}));
+
+// ─── Ready-to-install files (.zip) for one customer server: resource + license.lua with the key ───
+router.get('/platform/package-info', h(async (req, res) => res.json(templateInfo() || { missing: true })));
+
+router.post('/platform/customers/:id/servers/:sid/package', h(async (req, res) => {
+  const o = await customer(req.params.id);
+  parse(uuid, req.params.sid);
+  const b = parse(z.object({ apiKey: z.string().max(120).optional(), licenseKey: z.string().max(40).optional() }), req.body || {});
+  const s = await db.one('SELECT * FROM servers WHERE id=$1 AND org_id=$2', [req.params.sid, o.id]);
+  if (!s) throw notFound('server not found');
+  // Only the hash of an API key is stored: reuse the key just created, otherwise issue a new one.
+  let apiKey = b.apiKey && sha256(b.apiKey) === s.api_key_hash ? b.apiKey : null;
+  let rotated = false;
+  if (!apiKey) {
+    apiKey = randomToken('sac_srv');
+    await db.query('UPDATE servers SET api_key_hash=$2, api_key_prefix=$3, fingerprint=NULL WHERE id=$1', [s.id, sha256(apiKey), apiKey.slice(0, 14)]);
+    rotated = true;
+  }
+  const zip = buildPackage({ customerName: o.name, server: s, apiKey, licenseKey: b.licenseKey || null, ip: s.ip_locked ? s.allowed_ip : null });
+  await auditBoth(req, o.id, 'platform.package_download', { serverId: s.id, rotatedKey: rotated, ipLocked: s.ip_locked, ip: s.allowed_ip });
+  const slug = String(s.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'server';
+  res.set({ 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="AdvancedAC-${slug}.zip"`, 'X-SAC-Rotated': rotated ? '1' : '0' });
+  res.send(zip);
 }));
 
 router.post('/platform/customers/:id/servers/:sid/rotate', h(async (req, res) => {
